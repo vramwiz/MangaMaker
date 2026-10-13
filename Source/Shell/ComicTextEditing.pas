@@ -11,9 +11,17 @@ type
 
   TScreenLayoutImeEdit = class(TEdit)
   private
+    FPendingHigh: WideChar;
+    FCompositionText: string;
+    FCompositionCursor: Integer;
+    FInsideComposition: Boolean;
     FOnCommittedText: TScreenLayoutCommittedTextEvent;
     FOnComposition: TScreenLayoutCompositionEvent;
     procedure WMChar(var Message: TWMChar); message WM_CHAR;
+    procedure WMUniChar(var Message: TMessage); message WM_UNICHAR;
+    procedure WMImeChar(var Message: TMessage); message WM_IME_CHAR;
+    procedure WMImeSetContext(var Message: TMessage); message WM_IME_SETCONTEXT;
+    procedure CommitCodeUnit(Value: WideChar);
     procedure WMImeComposition(var Message: TMessage);
       message WM_IME_COMPOSITION;
     procedure WMImeEndComposition(var Message: TMessage);
@@ -21,6 +29,8 @@ type
     procedure WMImeStartComposition(var Message: TMessage);
       message WM_IME_STARTCOMPOSITION;
   public
+    procedure ResetPendingInput;
+    procedure DeliverComposition(const ResultText,Preedit: string; Cursor: Integer; Active: Boolean);
     // IMEまたは通常キー入力が確定した文字列を通知する。
     property OnCommittedText: TScreenLayoutCommittedTextEvent
       read FOnCommittedText write FOnCommittedText;
@@ -45,7 +55,7 @@ procedure MoveScreenLayoutTextCaretHorizontal(const Text: string;
 
 
 implementation
-uses System.Math, Winapi.Imm;
+uses System.Math, System.Character, Winapi.Windows, Winapi.Imm, ComicTextUnits;
 function DeleteScreenLayoutTextSelection(var Text: string;
   var CaretIndex, SelectionAnchor: Integer;
   var PreferredCaretX: Single): Boolean;
@@ -95,28 +105,9 @@ begin
       CaretIndex := SelectionEnd;
   end
   else if Direction < 0 then
-  begin
-    if CaretIndex > 0 then
-      Dec(CaretIndex);
-    if (CaretIndex > 0) and (Ord(Text[CaretIndex]) >= $D800) and
-      (Ord(Text[CaretIndex]) <= $DBFF) then
-      Dec(CaretIndex);
-    if (CaretIndex > 0) and (Text[CaretIndex] = #13) and
-      (Text[CaretIndex + 1] = #10) then
-      Dec(CaretIndex);
-  end
+    CaretIndex:=PreviousComicTextBoundary(Text,CaretIndex)
   else
-  begin
-    if CaretIndex < Length(Text) then
-      Inc(CaretIndex);
-    if (CaretIndex < Length(Text)) and
-      (Ord(Text[CaretIndex]) >= $D800) and
-      (Ord(Text[CaretIndex]) <= $DBFF) then
-      Inc(CaretIndex);
-    if (CaretIndex < Length(Text)) and (Text[CaretIndex] = #13) and
-      (Text[CaretIndex + 1] = #10) then
-      Inc(CaretIndex);
-  end;
+    CaretIndex:=NextComicTextBoundary(Text,CaretIndex);
   if not ExtendSelection then
     SelectionAnchor := CaretIndex;
   PreferredCaretX := -1.0;
@@ -124,54 +115,91 @@ end;
 
 procedure TScreenLayoutImeEdit.WMChar(var Message: TWMChar);
 begin
-  if (Message.CharCode >= 32) and Assigned(FOnCommittedText) then
-    FOnCommittedText(Self, string(WideChar(Message.CharCode)));
+  if Message.CharCode>=32 then CommitCodeUnit(WideChar(Message.CharCode));
   // 確定文字はDocument側へ渡し、Edit自身の文字列には残さない。
   Message.Result := 0;
 end;
 
+procedure TScreenLayoutImeEdit.ResetPendingInput;
+begin FPendingHigh:=#0; FCompositionText:=''; FCompositionCursor:=0; FInsideComposition:=False; end;
+
+procedure TScreenLayoutImeEdit.CommitCodeUnit(Value: WideChar);
+var Text: string;
+begin
+  if (Ord(Value)>=$D800) and (Ord(Value)<=$DBFF) then begin FPendingHigh:=Value; Exit; end;
+  Text:=Value;
+  if FPendingHigh<>#0 then begin Text:=FPendingHigh+Text; FPendingHigh:=#0; end;
+  if Assigned(FOnCommittedText) then FOnCommittedText(Self,Text);
+end;
+
+procedure TScreenLayoutImeEdit.WMUniChar(var Message: TMessage);
+begin
+  if Message.WParam=$FFFF then begin Message.Result:=1; Exit; end;
+  if (Message.WParam<=$10FFFF) and not ((Message.WParam>=$D800) and (Message.WParam<=$DFFF)) and
+    Assigned(FOnCommittedText) then FOnCommittedText(Self,Char.ConvertFromUtf32(Message.WParam));
+  Message.Result:=0;
+end;
+
+procedure TScreenLayoutImeEdit.WMImeChar(var Message: TMessage);
+begin CommitCodeUnit(WideChar(Message.WParam)); Message.Result:=0; end;
+
+procedure TScreenLayoutImeEdit.WMImeSetContext(var Message: TMessage);
+begin
+  // The external control renders preedit text; let Windows retain candidate UI.
+  Message.LParam:=Message.LParam and not LPARAM(ISC_SHOWUICOMPOSITIONWINDOW);
+  inherited;
+end;
+
 procedure TScreenLayoutImeEdit.WMImeComposition(var Message: TMessage);
 var
-  ByteCount: Integer;
-  CompositionCursor: Integer;
-  CompositionText: string;
   InputContext: HIMC;
+  ResultText: string;
+  function ReadString(Kind: DWORD): string;
+  var ByteCount: Integer;
+  begin
+    Result:=''; ByteCount:=ImmGetCompositionStringW(InputContext,Kind,nil,0);
+    if (ByteCount<=0) or (ByteCount>1048576) then Exit;
+    SetLength(Result,ByteCount div SizeOf(Char));
+    ImmGetCompositionStringW(InputContext,Kind,PChar(Result),Length(Result)*SizeOf(Char));
+  end;
 begin
-  CompositionText := '';
-  CompositionCursor := 0;
+  ResultText:='';
   InputContext := ImmGetContext(Handle);
   if InputContext <> 0 then
   try
-    ByteCount := ImmGetCompositionStringW(InputContext, GCS_COMPSTR,
-      nil, 0);
-    if ByteCount > 0 then
-    begin
-      SetLength(CompositionText, ByteCount div SizeOf(Char));
-      ImmGetCompositionStringW(InputContext, GCS_COMPSTR,
-        PChar(CompositionText), ByteCount);
+    if (Message.LParam and GCS_RESULTSTR)<>0 then begin
+      ResultText:=ReadString(GCS_RESULTSTR); FCompositionText:=''; FCompositionCursor:=0;
     end;
-    CompositionCursor := ImmGetCompositionStringW(InputContext,
-      GCS_CURSORPOS, nil, 0);
-    if CompositionCursor < 0 then
-      CompositionCursor := 0;
+    if (Message.LParam and GCS_COMPSTR)<>0 then FCompositionText:=ReadString(GCS_COMPSTR);
+    if (Message.LParam and GCS_CURSORPOS)<>0 then FCompositionCursor:=EnsureRange(
+      ImmGetCompositionStringW(InputContext,GCS_CURSORPOS,nil,0),0,Length(FCompositionText));
   finally
     ImmReleaseContext(Handle, InputContext);
   end;
-  inherited;
+  // Consume the result here as one edit. Passing it to DefWindowProc would
+  // also generate WM_IME_CHAR/WM_CHAR and insert the result a second time.
+  if Message.LParam=0 then ResetPendingInput;
+  DeliverComposition(ResultText,FCompositionText,FCompositionCursor,FInsideComposition);
+  Message.Result:=0;
+end;
+
+procedure TScreenLayoutImeEdit.DeliverComposition(const ResultText,Preedit: string; Cursor: Integer; Active: Boolean);
+begin
+  if (ResultText<>'') and Assigned(FOnCommittedText) then FOnCommittedText(Self,ResultText);
   if Assigned(FOnComposition) then
-    FOnComposition(Self, CompositionText, CompositionCursor, True);
+    FOnComposition(Self,Preedit,Cursor,Active);
 end;
 
 procedure TScreenLayoutImeEdit.WMImeEndComposition(var Message: TMessage);
 begin
-  inherited;
+  ResetPendingInput; inherited;
   if Assigned(FOnComposition) then
     FOnComposition(Self, '', 0, False);
 end;
 
 procedure TScreenLayoutImeEdit.WMImeStartComposition(var Message: TMessage);
 begin
-  inherited;
+  ResetPendingInput; FInsideComposition:=True; inherited;
   if Assigned(FOnComposition) then
     FOnComposition(Self, '', 0, True);
 end;

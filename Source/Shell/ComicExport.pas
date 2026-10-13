@@ -11,20 +11,27 @@ implementation
 
 function RenderSignature(Project: TComicProject; Page: TComicPage;
   Images: TDictionary<string,string>): string;
-var J: TJSONObject; Pair: TJSONPair; P: TComicPanel; Path,Hash,Text: string;
+var J: TJSONObject; Pair: TJSONPair; P: TComicPanel; Overlay: TComicOverlay; Path,Hash,Text: string;
+  procedure AddImage(const ID,FileName: string);
+  begin
+    if not Images.TryGetValue(FileName,Hash) then begin
+      if (FileName<>'') and FileExists(FileName) then Hash:=THashSHA2.GetHashStringFromFile(FileName) else Hash:='missing';
+      Images.Add(FileName,Hash);
+    end;
+    Text:=Text+'|'+ID+'|'+Hash;
+  end;
 begin
   J:=Page.Json;
   try
     Pair:=J.RemovePair('revision'); Pair.Free;
     Pair:=J.RemovePair('outputRevision'); Pair.Free;
-    Text:='renderer-5|'+IntToStr(Project.Width)+'x'+IntToStr(Project.Height)+'|'+J.ToJSON;
-    for P in Page.Panels do if P.ImageID<>'' then begin
-      Path:=Project.ImagePath(P.ImageID);
-      if not Images.TryGetValue(Path,Hash) then begin
-        if (Path<>'') and FileExists(Path) then Hash:=THashSHA2.GetHashStringFromFile(Path) else Hash:='missing';
-        Images.Add(Path,Hash);
+    Text:='renderer-11|'+IntToStr(Project.Width)+'x'+IntToStr(Project.Height)+'|'+J.ToJSON;
+    for P in Page.Panels do begin
+      if P.ImageID<>'' then AddImage(P.ImageID,Project.ImagePath(P.ImageID));
+      for Overlay in P.Overlays do begin
+        if Overlay.FileName='' then Path:=SafeChild(TPath.Combine(DataRoot,'Effects'),Overlay.MaterialID+'.png') else Path:=SafeChild(Project.Folder,Overlay.FileName);
+        AddImage(Overlay.MaterialID,Path);
       end;
-      Text:=Text+'|'+P.ImageID+'|'+Hash;
     end;
     Result:=THashSHA2.GetHashString(Text);
   finally J.Free; end;

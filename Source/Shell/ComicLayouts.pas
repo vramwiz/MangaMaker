@@ -28,6 +28,8 @@ type
 procedure SeedLayouts(List: TObjectList<TComicLayout>);
 procedure LoadLayouts(List: TObjectList<TComicLayout>; const FileName: string);
 procedure SaveLayouts(List: TObjectList<TComicLayout>; const FileName: string);
+procedure RenameLayout(List: TObjectList<TComicLayout>; Layout: TComicLayout; const Name,FileName: string);
+procedure RemoveLayout(List: TObjectList<TComicLayout>; Layout: TComicLayout; const FileName: string);
 
 implementation
 
@@ -143,8 +145,9 @@ var J,V: TJSONValue; A: TJSONArray; L: TComicLayout; Prepared: TObjectList<TComi
 begin
   if not FileExists(FileName) then Exit;
   Prepared:=TObjectList<TComicLayout>.Create; IDs:=TDictionary<string,Boolean>.Create;
-  J:=TJSONObject.ParseJSONValue(TFile.ReadAllText(FileName,TEncoding.UTF8));
+  J:=nil;
   try
+    J:=TJSONObject.ParseJSONValue(TFile.ReadAllText(FileName,TEncoding.UTF8));
     if not (J is TJSONObject) then raise Exception.Create('Invalid layout library.');
     if not (Round(JNum(TJSONObject(J),'version',0)) in [1,2]) then raise Exception.Create('Unsupported layout library version.');
     A:=TJSONObject(J).GetValue<TJSONArray>('layouts');
@@ -157,5 +160,23 @@ begin
     end;
     while Prepared.Count>0 do List.Add(Prepared.Extract(Prepared[0]));
   finally J.Free; IDs.Free; Prepared.Free; end;
+end;
+procedure RenameLayout(List: TObjectList<TComicLayout>; Layout: TComicLayout; const Name,FileName: string);
+var Previous: string; Other: TComicLayout;
+begin
+  if (Layout=nil) or Layout.BuiltIn or (List.IndexOf(Layout)<0) then raise Exception.Create('登録したテンプレートを選択してください。');
+  if (Trim(Name)='') or (Length(Trim(Name))>200) then raise Exception.Create('テンプレート名を入力してください。');
+  for Other in List do if (Other<>Layout) and SameText(Other.Name,Trim(Name)) then raise Exception.Create('同じ名前のテンプレートがあります。');
+  Previous:=Layout.Name; Layout.Name:=Trim(Name);
+  try SaveLayouts(List,FileName); except Layout.Name:=Previous; raise; end;
+end;
+procedure RemoveLayout(List: TObjectList<TComicLayout>; Layout: TComicLayout; const FileName: string);
+var Index: Integer;
+begin
+  Index:=List.IndexOf(Layout);
+  if (Layout=nil) or Layout.BuiltIn or (Index<0) then raise Exception.Create('登録したテンプレートを選択してください。');
+  List.Extract(Layout);
+  try SaveLayouts(List,FileName); except List.Insert(Index,Layout); raise; end;
+  Layout.Free;
 end;
 end.

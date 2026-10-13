@@ -1,4 +1,4 @@
-unit ComicIconButton;
+﻿unit ComicIconButton;
 
 interface
 
@@ -9,10 +9,11 @@ type
   TComicIcon = (ciSelect,ciRectangle,ciEllipse,ciRounded,ciPolygon,ciSplit,ciOrder,ciBalloonEllipse,
     ciBalloonRounded,ciTail,ciLayout,ciPanelEdit,ciImage,ciCharacters,ciNew,ciOpen,
     ciSave,ciUndo,ciRedo,ciExport,ciAddPage,ciDelete,ciUp,ciDown,ciRegister,
-    ciApplyLayout,ciInsertLayout,ciAssignImage,ciDetachImage,ciApplyText);
+    ciApplyLayout,ciInsertLayout,ciAssignImage,ciDetachImage,ciApplyText,ciThought,ciEffects);
   TComicButtonRole = (brAlways,brProject,brSave,brUndo,brRedo,brExport,brAddPage,
     brDeletePage,brPageUp,brPageDown,brRegister,brApplyLayout,brInsertLayout,
-    brMode,brTool,brDeletePanel,brAssignImage,brDetachImage,brTail,brApplyText,brDeleteBalloon);
+    brMode,brTool,brDeletePanel,brAssignImage,brDetachImage,brTail,brApplyText,brDeleteBalloon,brManageLayout,brDeleteTail,brTextPlacement,
+    brApplyFilter,brApplyFrame,brDeleteEffect);
 
   // Adapted from MapRaku's TVectArtDarkButton and code-drawn tool palette.
   // Document-specific dependencies are omitted; no MapRaku files are linked or changed.
@@ -114,6 +115,9 @@ begin
     ciBalloonRounded: Bubble(True);
     ciTail: begin C.Ellipse(X(-11),Y(-11),X(5),Y(1));
       C.Polyline([Point(X(-3),Y(-1)),Point(X(10),Y(11)),Point(X(2),Y(-3))]); end;
+    ciThought: begin C.Ellipse(X(-12),Y(-11),X(4),Y(3)); C.Ellipse(X(2),Y(2),X(8),Y(8)); C.Ellipse(X(8),Y(8),X(12),Y(12)); end;
+    ciEffects: begin C.Polygon([Point(X(0),Y(-12)),Point(X(3),Y(-3)),Point(X(12),Y(0)),Point(X(3),Y(3)),
+      Point(X(0),Y(12)),Point(X(-3),Y(3)),Point(X(-12),Y(0)),Point(X(-3),Y(-3))]); Plus(10,-10); end;
     ciLayout,ciPanelEdit,ciRegister,ciApplyLayout,ciInsertLayout: begin
       Box(-10,-11,10,11); Line(-10,-2,10,-2); Line(0,-2,0,11);
       if Icon=ciPanelEdit then begin Line(3,-7,12,2); Line(12,2,10,6); end;
