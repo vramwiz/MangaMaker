@@ -82,6 +82,12 @@
 - 最終記録はsession内 `Final-candidate-files.txt`（33ファイル）、`Final-candidate-hashes.csv`（ソース/文書候補）、`Final-build-source-hashes.csv`（ビルド入力全体）、`Final-verification-hashes.csv`（exe/ログ/結果/性能/CLI）へ同期する。旧1255ソース退避 `VerifiedSource-Final/` と区別し、現行退避は `VerifiedSource-Final-1262/` を使う。
 - 実IME候補選択/実変換確定/他アプリへの物理的な復帰、実モニターDPI切替、長時間制作は未検証のまま。READMEの残仕様も維持。これをcommit/push用候補として固定し、この後はソースを変更しない。
 
+### 公開確認
+
+- 実装commit [`0e8e602ea9d07ab2ad1107387c171851fde68b98`](https://github.com/vramwiz/MangaMaker/commit/0e8e602ea9d07ab2ad1107387c171851fde68b98) を既存の `origin/main` へ通常push。14:51 UTCに `git ls-remote` とfetchで、remote/main・HEAD・origin/mainの一致と作業ツリーがクリーンであることを確認。force pushなし、Git認証のブロックなし。
+- GitHubの当該commitを確認した結果、Actions実行0件、statusチェック0件、Check Runs 0件。このcheckoutにもActions定義はなく、利用可能なCI結果はない。CI成功として扱わず、上記のローカルDebug/Release/CLI検証を根拠とする。証跡はsession内 `Git-publication.json` / `GitHub-check-runs.json` とCI集約記録。
+- 後続はこの公開記録だけの文書更新。実装・ビルド入力・検証済みexeは変更しない。同期対象はソース/文書だけで、生成物と大きな素材はリポジトリへ送っていない。
+
 更新: 2026-10-13 06:42 UTC。以下は以前の文字入力区切りの歴史的記録。
 
 ## 最新の文字入力区切り（06:24～06:44 UTCの許可範囲）
