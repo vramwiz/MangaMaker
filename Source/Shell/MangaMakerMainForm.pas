@@ -5,7 +5,7 @@ interface
 uses Winapi.Windows, Winapi.Messages, Winapi.ShellAPI, System.SysUtils, System.Classes, System.Types, System.UITypes, System.Math,
   System.IOUtils, System.Generics.Collections, System.JSON, System.Hash, Vcl.Controls, Vcl.Forms,
   Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.ComCtrls, Vcl.Menus, Vcl.Dialogs,
-  Vcl.Graphics, Vcl.Imaging.pngimage, ComicModel, ComicRender, ComicAssetDialog, ComicLayouts, ComicExport, ComicEditing, ComicIconButton;
+  Vcl.Graphics, Vcl.Imaging.pngimage, ComicModel, ComicRender, ComicAssetDialog, ComicLayouts, ComicExport, ComicEditing, ComicIconButton, ComicGeometry, ComicTextInput;
 
 type
   TComicPaintBox = class(TPaintBox)
@@ -49,6 +49,23 @@ type
     FModeTitle: TLabel;
     FDragZoom,FDragTailX,FDragTailY: Double;
     FIconTestClicks: Integer;
+    FGeometryPoints: TList<TPointF>;
+    FSnap: TCheckBox;
+    FSplitStage: Integer;
+    FSplitPanelID: string;
+    FSplitA,FSplitB,FSplitC,FSplitD: TPointF;
+    FDragVertices: TArray<TPointF>;
+    FDragVertex: Integer;
+    FDragImageBounds: TRectF;
+    function VertexHandles(Panel: TComicPanel): TArray<TPointF>;
+    function HitVertex(Panel: TComicPanel; const P: TPointF): Integer;
+    procedure EditVertexContext(const P: TPointF);
+    procedure PreservePanelImage(Panel: TComicPanel; const Original: TRectF);
+    procedure ResetGeometryInput;
+    function SnapCreationPoint(const P: TPointF; const ExcludePanelID: string=''): TPointF;
+    procedure PolygonClick(const P: TPointF);
+    procedure SplitClick(const P: TPointF);
+    procedure CommitSplit(Index: Integer);
     procedure IconTestClick(Sender: TObject);
     procedure ModeClick(Sender: TObject);
     procedure ButtonHelp(Sender: TObject);
@@ -106,6 +123,8 @@ type
     procedure DragOver(Sender,Source: TObject; X,Y: Integer; State: TDragState; var Accept: Boolean); reintroduce;
     procedure DragDrop(Sender,Source: TObject; X,Y: Integer); reintroduce;
     procedure ApplyText(Sender: TObject);
+    procedure TextInputDialog(Sender: TObject);
+    procedure FinishTextDialog(Dialog: TComicTextDialog);
     procedure ImageZoom(Sender: TObject);
     procedure ImageSelectionChanged(Sender: TObject);
     procedure Tail(Sender: TObject);
@@ -128,11 +147,12 @@ function PrintWindow(hWnd: HWND; hdcBlt: HDC; nFlags: UINT): BOOL; stdcall; exte
 
 constructor TMainForm.Create(AOwner: TComponent);
 begin
-  inherited; FPageIndex:=-1; FPanelIndex:=-1; FBalloonIndex:=-1; FScale:=1;
+  inherited; FPageIndex:=-1; FPanelIndex:=-1; FBalloonIndex:=-1; FDragVertex:=-1; FScale:=1;
   FTesting:=(ParamCount>0) and (ParamStr(1)='--self-test');
   FCharacters:=TObjectList<TComicAsset>.Create; FRenderer:=TComicRenderer.Create;
   FUndo:=TList<string>.Create; FRedo:=TList<string>.Create;
   FIconButtons:=TList<TComicIconButton>.Create;
+  FGeometryPoints:=TList<TPointF>.Create;
   FLayouts:=TObjectList<TComicLayout>.Create; FLayoutLibraryWritable:=True; FPageDropIndex:=-1;
   SeedLayouts(FLayouts);
   try LoadLayouts(FLayouts,TPath.Combine(DataRoot,'Presets\Layouts.json'));
@@ -143,7 +163,7 @@ begin
   RefreshUI;
 end;
 destructor TMainForm.Destroy;
-begin FProject.Free; FCharacters.Free; FRenderer.Free; FUndo.Free; FRedo.Free; FLayouts.Free; FIconButtons.Free; inherited; end;
+begin FProject.Free; FCharacters.Free; FRenderer.Free; FUndo.Free; FRedo.Free; FLayouts.Free; FIconButtons.Free; FGeometryPoints.Free; inherited; end;
 procedure TMainForm.BuildUI;
 var Menu: TMainMenu; M,N: TMenuItem; Top,Left,Right,Bar,P,Modes: TPanel; Layout: TComicLayout;
   Tab: TTabSheet; Body: TScrollBox; L: TLabel;
@@ -228,15 +248,21 @@ begin
   for Layout in FLayouts do FLayoutList.Items.AddObject(Layout.Name,Layout);
   FLayoutList.ItemIndex:=0;
   Tab:=TabSheet('コマ編集'); Body:=Scrolling(Tab);
-  LabelAt(Body,'対角2点でコマを作成。選択後は移動と外周8点のサイズ変更。',12,10);
-  Icon(Body,'選択・移動',12,62,44,44,ciSelect,0,brTool,Tool,False,1);
+  LabelAt(Body,'青8点：拡縮／黄色：頂点移動'+sLineBreak+'頂点・辺を右クリック：削除・追加',12,10);
+  Icon(Body,'選択・移動',12,62,44,44,ciSelect,0,brTool,Tool,False,1).Hint:='青の外周8点で拡縮、黄色の内側点で頂点移動。頂点を右クリックで削除、辺を右クリックで追加。';
   Icon(Body,'四角コマ：対角2点をクリック',68,62,44,44,ciRectangle,1,brTool,Tool,False,1);
   Icon(Body,'楕円コマ：対角2点をクリック',124,62,44,44,ciEllipse,2,brTool,Tool,False,1);
   Icon(Body,'角丸コマ：対角2点をクリック',180,62,44,44,ciRounded,3,brTool,Tool,False,1);
   Icon(Body,'読む順番にコマをクリック',236,62,44,44,ciOrder,4,brTool,Tool,False,1);
   LabelAt(Body,'選択  /  四角  /  楕円  /  角丸  /  順序',12,114,28);
-  Icon(Body,'選択コマを削除',12,158,268,40,ciDelete,0,brDeletePanel,DeleteObject,True);
-  Icon(Body,'現在のコマ割りを登録',12,208,268,40,ciRegister,0,brRegister,RegisterLayout,True);
+  Icon(Body,'多角形コマ',12,150,132,44,ciPolygon,8,brTool,Tool,True,1).Hint:='頂点をクリックし、最初の点で閉じます。右クリックで最後の点を戻す。Escで中止。';
+  Icon(Body,'4点分割',150,150,130,44,ciSplit,9,brTool,Tool,True,1).Hint:='四角・凸多角形の外周2点、帯の幅、対側交点をクリックして分割します。';
+  FSnap:=TCheckBox.Create(Self); FSnap.Parent:=Body; FSnap.SetBounds(D(12),D(202),D(268),D(26));
+  FSnap.Caption:='外枠・コマへのスナップ（Altで解除）'; FSnap.Checked:=True;
+  LabelAt(Body,'多角形は最初の点で閉じる。'+sLineBreak+'分割は四角・凸多角形の外周から4点。',12,236);
+  Icon(Body,'選択コマを削除',12,290,268,40,ciDelete,0,brDeletePanel,DeleteObject,True);
+  Icon(Body,'現在のコマ割りを登録',12,340,268,40,ciRegister,0,brRegister,RegisterLayout,True);
+  Body.VertScrollBar.Range:=D(392);
   Tab:=TabSheet('画像配置');
   P:=TPanel.Create(Self); P.Parent:=Tab; P.Align:=alTop; P.Height:=D(188); P.BevelOuter:=bvNone;
   Icon(P,'画像管理・取り込み',10,10,270,36,ciImage,0,brProject,Images,True);
@@ -255,8 +281,9 @@ begin
   Icon(Body,'選択した吹き出しのしっぽ先端を指定',192,12,44,44,ciTail,7,brTail,Tail,False,3);
   LabelAt(Body,'選択 / 楕円 / 角丸 / しっぽ',12,64,28);
   LabelAt(Body,'選択中の吹き出しのセリフ',12,100,28);
-  FText:=TMemo.Create(Self); FText.Parent:=Body; FText.SetBounds(D(12),D(132),D(270),D(136)); FText.ScrollBars:=ssVertical;
+  FText:=TMemo.Create(Self); FText.Parent:=Body; FText.SetBounds(D(12),D(132),D(270),D(100)); FText.ScrollBars:=ssVertical;
   FText.ImeMode:=imOpen;
+  Icon(Body,'専用文字入力',12,238,270,32,ciApplyText,0,brApplyText,TextInputDialog,True).Hint:='IMEとUTF-16編集バッファを使う専用入力。確定で反映、取消で作品を維持。';
   FVertical:=TCheckBox.Create(Self); FVertical.Parent:=Body; FVertical.SetBounds(D(12),D(280),D(130),D(26)); FVertical.Caption:='縦書き';
   FTransparent:=TCheckBox.Create(Self); FTransparent.Parent:=Body; FTransparent.SetBounds(D(144),D(280),D(130),D(26)); FTransparent.Caption:='文字だけ表示';
   FOverflow:=TCheckBox.Create(Self); FOverflow.Parent:=Body; FOverflow.SetBounds(D(12),D(312),D(270),D(26)); FOverflow.Caption:='コマ枠からはみ出すことを許可'; FOverflow.Checked:=True;
@@ -386,6 +413,8 @@ begin
       brDetachImage: Button.Enabled:=HasPanel and (Page.Panels[FPanelIndex].ImageID<>'');
       brTail,brApplyText,brDeleteBalloon: Button.Enabled:=HasBalloon;
     end;
+    if (Button.Role=brTool) and (Button.Tag=9) then
+      Button.Enabled:=HasPage and (Page.Panels.Count>0) and ((not HasPanel) or Page.Panels[FPanelIndex].CanSplit);
     Button.Selected:=((Button.Role=brMode) and (Button.Tag=FTabs.ActivePageIndex)) or
       ((Button.Role in [brTool,brTail]) and (Button.Context=FTabs.ActivePageIndex) and (Button.Tag=FTool));
   end;
@@ -494,9 +523,9 @@ begin
   Checkpoint; FProject.Pages.Move(FPageIndex,Dest); FPageIndex:=Dest; Changed(False);
 end;
 procedure TMainForm.PageSelect(Sender: TObject);
-begin if FRefreshing then Exit; CancelDrag; FPageIndex:=FPages.ItemIndex; FPanelIndex:=-1; FBalloonIndex:=-1; FFirst:=False; ShowPageStatus; UpdateIconState; FCanvas.Invalidate; end;
+begin if FRefreshing then Exit; CancelDrag; ResetGeometryInput; FPageIndex:=FPages.ItemIndex; FPanelIndex:=-1; FBalloonIndex:=-1; FFirst:=False; ShowPageStatus; UpdateIconState; FCanvas.Invalidate; end;
 procedure TMainForm.TabChanged(Sender: TObject);
-begin CancelDrag; FTool:=0; FFirst:=False; if FTabs.ActivePageIndex<>3 then FBalloonIndex:=-1; UpdateIconState; FCanvas.Invalidate; end;
+begin CancelDrag; ResetGeometryInput; FTool:=0; FFirst:=False; if FTabs.ActivePageIndex<>3 then FBalloonIndex:=-1; UpdateIconState; FCanvas.Invalidate; end;
 procedure TMainForm.DrawPageItem(Control: TWinControl; Index: Integer; Rect: TRect; State: TOwnerDrawState);
 var R: TRect; B: TBitmap; I: Integer;
   function D(Value: Integer): Integer; begin Result:=MulDiv(Value,CurrentPPI,96); end;
@@ -516,6 +545,7 @@ procedure TMainForm.Undo(Sender: TObject);
 var P: TComicPage;
 begin
   CancelDrag;
+  ResetGeometryInput;
   if (FProject=nil) or (FUndo.Count=0) then Exit;
   FRedo.Add(FProject.Snapshot); FProject.Restore(FUndo.Last); FUndo.Delete(FUndo.Count-1);
   for P in FProject.Pages do P.OutputRevision:=-1;
@@ -526,6 +556,7 @@ procedure TMainForm.Redo(Sender: TObject);
 var P: TComicPage;
 begin
   CancelDrag;
+  ResetGeometryInput;
   if (FProject=nil) or (FRedo.Count=0) then Exit;
   FUndo.Add(FProject.Snapshot); FProject.Restore(FRedo.Last); FRedo.Delete(FRedo.Count-1);
   for P in FProject.Pages do P.OutputRevision:=-1;
@@ -647,17 +678,241 @@ begin
     FPageIndex:=FProject.Pages.IndexOf(Current); Changed(False);
   finally Moved.Free; Ordered.Free; FPages.Invalidate; end;
 end;
+procedure TMainForm.PreservePanelImage(Panel: TComicPanel; const Original: TRectF);
+var Current: TRectF;
+begin
+  if Original.IsEmpty then Exit;
+  Current:=FRenderer.ImageBounds(FProject,Panel); if Current.IsEmpty then Exit;
+  Panel.Zoom:=Panel.Zoom*Original.Width/Current.Width;
+  Panel.PanX:=Original.CenterPoint.X-Panel.Bounds.CenterPoint.X;
+  Panel.PanY:=Original.CenterPoint.Y-Panel.Bounds.CenterPoint.Y;
+end;
+function TMainForm.VertexHandles(Panel: TComicPanel): TArray<TPointF>;
+var Points: TArray<TPointF>; I,N,K: Integer; Direction,Q: TPointF; LengthValue,Step: Double;
+begin
+  Result:=nil; if not (Panel.Shape in [0,3]) then Exit;
+  Points:=Panel.Outline; N:=Length(Points); SetLength(Result,N);
+  for I:=0 to N-1 do begin
+    Direction:=TPointF.Create((Points[(I+N-1) mod N].X+Points[(I+1) mod N].X)/2-Points[I].X,
+      (Points[(I+N-1) mod N].Y+Points[(I+1) mod N].Y)/2-Points[I].Y);
+    if Abs((Double(Points[(I+N-1) mod N].X)-Points[I].X)*(Points[(I+1) mod N].Y-Points[I].Y)-
+      (Double(Points[(I+N-1) mod N].Y)-Points[I].Y)*(Points[(I+1) mod N].X-Points[I].X))<0.001 then
+      Direction:=TPointF.Create(-(Points[(I+1) mod N].Y-Points[I].Y),Points[(I+1) mod N].X-Points[I].X);
+    LengthValue:=Hypot(Direction.X,Direction.Y); Result[I]:=Points[I]; if LengthValue<0.001 then Continue;
+    Step:=MulDiv(14,CurrentPPI,96)/Max(FScale,0.001);
+    for K:=0 to 8 do begin
+      Q:=TPointF.Create(Points[I].X+Direction.X/LengthValue*Step,Points[I].Y+Direction.Y/LengthValue*Step);
+      if PolygonContains(Points,Q) then begin Result[I]:=Q; Break; end;
+      Q:=TPointF.Create(Points[I].X-Direction.X/LengthValue*Step,Points[I].Y-Direction.Y/LengthValue*Step);
+      if PolygonContains(Points,Q) then begin Result[I]:=Q; Break; end;
+      Step:=Step/2;
+    end;
+  end;
+end;
+function TMainForm.HitVertex(Panel: TComicPanel; const P: TPointF): Integer;
+var Points: TArray<TPointF>; I: Integer; Distance,Best: Double;
+begin
+  Result:=-1; Best:=MulDiv(7,CurrentPPI,96)/Max(FScale,0.001); Points:=VertexHandles(Panel);
+  for I:=0 to High(Points) do begin
+    Distance:=Hypot(Double(P.X)-Points[I].X,Double(P.Y)-Points[I].Y);
+    if Distance<=Best then begin Best:=Distance; Result:=I; end;
+  end;
+end;
+procedure TMainForm.EditVertexContext(const P: TPointF);
+var Panel: TComicPanel; Points,Candidate: TArray<TPointF>; I,J,Index,N: Integer; Q: TPointF;
+  T,LengthSquared,Distance,Best: Double; Image: TRectF;
+begin
+  if (Page=nil) or (FPanelIndex<0) or (FPanelIndex>=Page.Panels.Count) then Exit;
+  Panel:=Page.Panels[FPanelIndex]; if not (Panel.Shape in [0,3]) then begin
+    FStatus.SimpleText:='楕円・角丸は固有形状を保つため頂点編集の対象外です。'; Exit;
+  end;
+  Points:=Panel.Outline; N:=Length(Points); Index:=HitVertex(Panel,P);
+  if Index<0 then for I:=0 to High(Points) do
+    if Hypot(Double(P.X)-Points[I].X,Double(P.Y)-Points[I].Y)*FScale<=MulDiv(7,CurrentPPI,96) then begin Index:=I; Break; end;
+  if Index>=0 then begin
+    if N<=3 then begin FStatus.SimpleText:='コマには最低3頂点が必要です。'; Exit; end;
+    SetLength(Candidate,N-1); J:=0;
+    for I:=0 to N-1 do if I<>Index then begin Candidate[J]:=Points[I]; Inc(J); end;
+  end else begin
+    if N>=256 then begin FStatus.SimpleText:='頂点は256点までです。'; Exit; end;
+    Index:=-1; Best:=MulDiv(7,CurrentPPI,96)/Max(FScale,0.001);
+    for I:=0 to N-1 do begin
+      LengthSquared:=Sqr(Double(Points[(I+1) mod N].X)-Points[I].X)+Sqr(Double(Points[(I+1) mod N].Y)-Points[I].Y);
+      if LengthSquared<0.001 then Continue;
+      T:=EnsureRange(((Double(P.X)-Points[I].X)*(Points[(I+1) mod N].X-Points[I].X)+
+        (Double(P.Y)-Points[I].Y)*(Points[(I+1) mod N].Y-Points[I].Y))/LengthSquared,0.0,1.0);
+      Q:=TPointF.Create(Points[I].X+(Points[(I+1) mod N].X-Points[I].X)*T,
+        Points[I].Y+(Points[(I+1) mod N].Y-Points[I].Y)*T);
+      Distance:=Hypot(Double(P.X)-Q.X,Double(P.Y)-Q.Y);
+      if Distance<=Best then begin Best:=Distance; Index:=I; FLast:=Q; end;
+    end;
+    if Index<0 then begin FStatus.SimpleText:='選択コマの内側の頂点を右クリックして削除、辺を右クリックして追加。'; Exit; end;
+    SetLength(Candidate,N+1);
+    for I:=0 to Index do Candidate[I]:=Points[I]; Candidate[Index+1]:=FLast;
+    for I:=Index+1 to N-1 do Candidate[I+1]:=Points[I];
+  end;
+  if not ValidPolygon(Candidate) then begin FStatus.SimpleText:='頂点操作が交差やゼロ面積を生むため確定できません。'; Exit; end;
+  Image:=FRenderer.ImageBounds(FProject,Panel); Checkpoint;
+  Panel.SetVertices(Candidate); PreservePanelImage(Panel,Image); Changed;
+  FStatus.SimpleText:='頂点を更新しました。画像位置を維持し、Ctrl+Zで戻せます。';
+end;
+procedure TMainForm.ResetGeometryInput;
+begin
+  if FGeometryPoints<>nil then FGeometryPoints.Clear;
+  FSplitStage:=0; FSplitPanelID:='';
+end;
+function TMainForm.SnapCreationPoint(const P: TPointF; const ExcludePanelID: string): TPointF;
+var Tolerance,Best,BestEdge,DX,DY,Distance: Double; Panel: TComicPanel; Point,Q,EdgePoint,VertexPoint,AxisPoint: TPointF; Values: TArray<TPointF>;
+  function Earlier(const A,B: TPointF): Boolean;
+  begin Result:=(A.X<B.X) or ((A.X=B.X) and (A.Y<B.Y)); end;
+  procedure Axis(X,Y: Single);
+  var AX,AY: Double;
+  begin
+    AX:=Abs(Double(P.X)-X); AY:=Abs(Double(P.Y)-Y);
+    if (AX<DX) or ((AX=DX) and (X<AxisPoint.X)) then begin DX:=AX; if DX<=Tolerance then AxisPoint.X:=X; end;
+    if (AY<DY) or ((AY=DY) and (Y<AxisPoint.Y)) then begin DY:=AY; if DY<=Tolerance then AxisPoint.Y:=Y; end;
+  end;
+begin
+  Result:=P; if (Page=nil) or not FSnap.Checked then Exit;
+  AxisPoint:=P; VertexPoint:=P; EdgePoint:=P;
+  Tolerance:=MulDiv(8,CurrentPPI,96)/Max(FScale,0.001); DX:=Tolerance+1; DY:=Tolerance+1; Best:=Tolerance+1; BestEdge:=Tolerance+1;
+  Axis(60,60); Axis(FProject.Width-60,FProject.Height-60);
+  for Panel in Page.Panels do begin
+    if Panel.ID=ExcludePanelID then Continue;
+    Axis(Panel.Bounds.Left,Panel.Bounds.Top); Axis(Panel.Bounds.Right,Panel.Bounds.Bottom);
+    Values:=Panel.Outline;
+    for Point in Values do begin
+      Distance:=Hypot(Double(P.X)-Point.X,Double(P.Y)-Point.Y);
+      if (Distance<=Tolerance) and ((Distance<Best) or ((Distance=Best) and Earlier(Point,VertexPoint))) then
+        begin VertexPoint:=Point; Best:=Distance; end;
+    end;
+    if Panel.Shape in [0,3] then begin
+      Distance:=NearestEdgePoint(Values,P,Q);
+      if (Distance<=Tolerance) and ((Distance<BestEdge) or ((Distance=BestEdge) and Earlier(Q,EdgePoint))) then
+        begin BestEdge:=Distance; EdgePoint:=Q; end;
+    end;
+  end;
+  if Best<=Tolerance then Result:=VertexPoint
+  else if BestEdge<=Tolerance then Result:=EdgePoint
+  else Result:=AxisPoint;
+end;
+procedure TMainForm.PolygonClick(const P: TPointF);
+var Panel: TComicPanel; Values: TArray<TPointF>;
+begin
+  if (FGeometryPoints.Count>=3) and (Hypot(Double(P.X)-FGeometryPoints[0].X,Double(P.Y)-FGeometryPoints[0].Y)*FScale<=MulDiv(10,CurrentPPI,96)) then begin
+    Values:=FGeometryPoints.ToArray;
+    if not ValidPolygon(Values) or (PolygonArea(Values)<25) then begin
+      FStatus.SimpleText:='交差・重複点・小さすぎる面積があるため確定できません。右クリックで最後の点を戻せます。'; Exit;
+    end;
+    Panel:=TComicPanel.Create;
+    try Panel.SetVertices(Values); except Panel.Free; raise; end;
+    Checkpoint; Panel.Number:=Page.Panels.Count+1; Page.Panels.Add(Panel); FPanelIndex:=Page.Panels.Count-1;
+    FBalloonIndex:=-1; FGeometryPoints.Clear; Changed; FStatus.SimpleText:='多角形コマを作成しました。画像サムネイルから配置できます。'; Exit;
+  end;
+  if FGeometryPoints.Count>=256 then begin FStatus.SimpleText:='頂点は256点までです。最初の点で閉じるか、右クリックで戻してください。'; Exit; end;
+  if (FGeometryPoints.Count>0) and (Hypot(Double(P.X)-FGeometryPoints.Last.X,Double(P.Y)-FGeometryPoints.Last.Y)<0.01) then Exit;
+  FGeometryPoints.Add(P); FLast:=P; FCanvas.Invalidate;
+  FStatus.SimpleText:=Format('%d 頂点。最初の点をクリックして閉じる／右クリックで戻す／Escで中止。',[FGeometryPoints.Count]);
+end;
+procedure TMainForm.SplitClick(const P: TPointF);
+var I,Index: Integer; Owner: TComicPanel; Near,Mid: TPointF; Dist,Best,Tolerance: Double;
+begin
+  Tolerance:=MulDiv(12,CurrentPPI,96)/Max(FScale,0.001); Index:=-1;
+  if FSplitStage=0 then begin
+    Best:=Tolerance+1;
+    for I:=Page.Panels.Count-1 downto 0 do if Page.Panels[I].CanSplit then begin
+      Dist:=NearestEdgePoint(Page.Panels[I].Outline,P,Near);
+      if Dist<Best then begin Best:=Dist; Index:=I; FSplitA:=Near; end;
+    end;
+    if (Index<0) or (Best>Tolerance) then begin FStatus.SimpleText:='四角・凸多角形の外周付近をクリックしてください。'; Exit; end;
+    FSplitPanelID:=Page.Panels[Index].ID; FPanelIndex:=Index; FBalloonIndex:=-1; FSplitStage:=1;
+    FStatus.SimpleText:='第2点：反対側の外周をクリックして最初の境界線を決めてください。';
+  end else begin
+    for I:=0 to Page.Panels.Count-1 do if Page.Panels[I].ID=FSplitPanelID then Index:=I;
+    if Index<0 then begin ResetGeometryInput; Exit; end;
+    Owner:=Page.Panels[Index];
+    case FSplitStage of
+      1: begin
+        if NearestEdgePoint(Owner.Outline,P,Near)>Tolerance then begin FStatus.SimpleText:='第2点は対象コマの外周付近です。'; Exit; end;
+        Mid:=TPointF.Create((FSplitA.X+Near.X)/2,(FSplitA.Y+Near.Y)/2);
+        if (Hypot(Double(Near.X)-FSplitA.X,Double(Near.Y)-FSplitA.Y)<10) or
+          (NearestEdgePoint(Owner.Outline,Mid,FSplitB)<0.5) then begin
+          FStatus.SimpleText:='第2点はコマ内部を横切る別の外周に指定してください。'; Exit;
+        end;
+        FSplitB:=Near; FSplitStage:=2; FStatus.SimpleText:='第3点：分割帯の幅を指定してください（最低4px）。';
+      end;
+      2: begin
+        if not BandEndpoints(Owner.Outline,FSplitA,FSplitB,P,FSplitC,FSplitD) then begin
+          FStatus.SimpleText:='コマ内に幅4px以上の平行な帯を作れる位置を指定してください。'; Exit;
+        end;
+        FSplitStage:=3; FStatus.SimpleText:='第4点：表示した対側の交点付近をクリック。平行・同じ幅に補正します。';
+      end;
+      3: begin
+        if Hypot(Double(P.X)-FSplitD.X,Double(P.Y)-FSplitD.Y)>Tolerance then begin
+          FStatus.SimpleText:='第4点は表示された対側の交点付近です。右クリックで幅指定へ戻れます。'; Exit;
+        end;
+        CommitSplit(Index); Exit;
+      end;
+    end;
+  end;
+  UpdateIconState; FCanvas.Invalidate;
+end;
+procedure TMainForm.CommitSplit(Index: Integer);
+var Owner,First,Second,Other: TComicPanel; One,Two: TArray<TPointF>; J: TJSONObject;
+  OriginalImage,DefaultImage: TRectF; Balloon: TComicBalloon; Center,Near: TPointF; OldID: string; Number: Integer;
+  procedure PreserveImage(Panel: TComicPanel);
+  begin
+    if OriginalImage.IsEmpty then Exit;
+    DefaultImage:=FRenderer.ImageBounds(FProject,Panel);
+    if DefaultImage.IsEmpty then Exit;
+    Panel.Zoom:=Panel.Zoom*OriginalImage.Width/DefaultImage.Width;
+    Panel.PanX:=OriginalImage.CenterPoint.X-Panel.Bounds.CenterPoint.X;
+    Panel.PanY:=OriginalImage.CenterPoint.Y-Panel.Bounds.CenterPoint.Y;
+  end;
+begin
+  Owner:=Page.Panels[Index];
+  if not SplitPolygonBand(Owner.Outline,FSplitA,FSplitB,FSplitC,One,Two) then begin
+    FStatus.SimpleText:='この帯では有効な2コマになりません。右クリックで幅指定へ戻してください。'; Exit;
+  end;
+  First:=TComicPanel.Create; Second:=TComicPanel.Create;
+  try
+    J:=Owner.Json;
+    try First.Read(J); Second.Read(J); finally J.Free; end;
+    OldID:=Owner.ID; Number:=Owner.Number; Second.ID:=NewUID; Second.Number:=Number+1;
+    First.SetVertices(One); Second.SetVertices(Two);
+    OriginalImage:=FRenderer.ImageBounds(FProject,Owner); PreserveImage(First); PreserveImage(Second);
+    Checkpoint;
+    for Other in Page.Panels do if (Other<>Owner) and (Other.Number>Number) then Inc(Other.Number);
+    for Balloon in Page.Balloons do if Balloon.PanelID=OldID then begin
+      Center:=Balloon.Bounds.CenterPoint;
+      if PolygonContains(Two,Center) then Balloon.PanelID:=Second.ID
+      else if not PolygonContains(One,Center) and
+        (NearestEdgePoint(Two,Center,Near)<NearestEdgePoint(One,Center,Near)) then Balloon.PanelID:=Second.ID;
+    end;
+    Page.Panels.Delete(Index); Page.Panels.Insert(Index,First); First:=nil; Page.Panels.Insert(Index+1,Second); Second:=nil;
+    ResetGeometryInput; FPanelIndex:=Index; FBalloonIndex:=-1; Changed;
+    FStatus.SimpleText:='2コマへ分割しました。画像の位置・倍率を維持し、Undoで全体を戻せます。';
+  finally First.Free; Second.Free; end;
+end;
 procedure TMainForm.Tool(Sender: TObject);
 begin
   CancelDrag;
-  FTool:=TButton(Sender).Tag; FFirst:=False; FNumber:=1;
-  if FTool in [1,2,3,5,6] then FStatus.SimpleText:='対角の1点目、2点目をクリックしてください。Escで中止。'
+  ResetGeometryInput;
+  FTool:=TControl(Sender).Tag; FFirst:=False; FNumber:=1;
+  if FTool=8 then FStatus.SimpleText:='頂点をクリック。最初の点で閉じる。右クリックで最後の点を戻す。Escで中止。'
+  else if FTool=9 then FStatus.SimpleText:='分割する四角・凸多角形の外周の1点目をクリック。Escで中止。'
+  else if FTool in [1,2,3,5,6] then FStatus.SimpleText:='対角の1点目、2点目をクリックしてください。Escで中止。'
   else if FTool=4 then FStatus.SimpleText:='読む順番にコマをクリックしてください。'
-  else FStatus.SimpleText:='対象をクリックして選択。ドラッグで移動、外周8点でサイズ変更。';
+  else FStatus.SimpleText:='対象を選択。ドラッグで移動、青8点で拡縮、黄色で頂点移動。頂点／辺を右クリックで削除／追加。';
   UpdateIconState;
 end;
 procedure TMainForm.Paint(Sender: TObject);
-var C: TCanvas; R: TRect; B: TRectF; HandlePoint: TPointF; HX,HY: Integer;
+var C: TCanvas; R: TRect; B: TRectF; HandlePoint: TPointF; HX,HY,I: Integer;
+  function ScreenPoint(const P: TPointF): TPoint;
+  begin Result:=Point(FPageRect.Left+Round(P.X*FScale),FPageRect.Top+Round(P.Y*FScale)); end;
+  procedure GuideLine(const A,B: TPointF);
+  var P,Q: TPoint;
+  begin P:=ScreenPoint(A); Q:=ScreenPoint(B); C.MoveTo(P.X,P.Y); C.LineTo(Q.X,Q.Y); end;
 begin
   C:=FCanvas.Canvas; C.Brush.Color:=$302B28; C.FillRect(FCanvas.ClientRect);
   if (Page=nil) or not HasCharacter then begin
@@ -687,8 +942,35 @@ begin
     end;
     C.Pen.Width:=1;
   end;
+  if (FTabs.ActivePageIndex=1) and (FTool=0) and (FPanelIndex>=0) and (FPanelIndex<Page.Panels.Count) then begin
+    C.Brush.Color:=$60D6FF; C.Pen.Color:=$202020; C.Brush.Style:=bsSolid;
+    for HandlePoint in VertexHandles(Page.Panels[FPanelIndex]) do begin
+      HX:=ScreenPoint(HandlePoint).X; HY:=ScreenPoint(HandlePoint).Y;
+      C.Rectangle(HX-4,HY-4,HX+5,HY+5);
+    end;
+  end;
   if FFirst then begin C.Pen.Color:=clRed; C.MoveTo(FPageRect.Left+Round(FStart.X*FScale)-6,FPageRect.Top+Round(FStart.Y*FScale));
     C.LineTo(FPageRect.Left+Round(FStart.X*FScale)+6,FPageRect.Top+Round(FStart.Y*FScale)); end;
+  if FGeometryPoints.Count>0 then begin
+    C.Pen.Color:=$E5B45B; C.Pen.Width:=2;
+    for I:=1 to FGeometryPoints.Count-1 do GuideLine(FGeometryPoints[I-1],FGeometryPoints[I]);
+    C.Pen.Style:=psDot; GuideLine(FGeometryPoints.Last,FLast); C.Pen.Style:=psSolid;
+    for HandlePoint in FGeometryPoints do begin
+      HX:=ScreenPoint(HandlePoint).X; HY:=ScreenPoint(HandlePoint).Y;
+      C.Brush.Color:=$E5B45B; C.FillRect(Rect(HX-3,HY-3,HX+4,HY+4));
+    end;
+    C.Pen.Width:=1;
+  end;
+  if FSplitStage>0 then begin
+    C.Pen.Color:=$4040FF; C.Pen.Width:=2;
+    if FSplitStage=1 then GuideLine(FSplitA,FLast) else GuideLine(FSplitA,FSplitB);
+    if FSplitStage>=3 then begin
+      C.Pen.Color:=$E5B45B; GuideLine(FSplitC,FSplitD);
+      HX:=ScreenPoint(FSplitD).X; HY:=ScreenPoint(FSplitD).Y;
+      C.Brush.Color:=$E5B45B; C.FillRect(Rect(HX-5,HY-5,HX+6,HY+6));
+    end;
+    C.Pen.Width:=1;
+  end;
 end;
 function TMainForm.ToPage(X,Y: Integer): TPointF;
 begin Result:=TPointF.Create((X-FPageRect.Left)/FScale,(Y-FPageRect.Top)/FScale); end;
@@ -698,7 +980,7 @@ begin
   Result:=-1; if Page=nil then Exit;
   for I:=Page.Panels.Count-1 downto 0 do begin
     R:=Page.Panels[I].Bounds; if not R.Contains(P) then Continue;
-    G:=ShapeRegion(Rect(Round(R.Left),Round(R.Top),Round(R.Right),Round(R.Bottom)),Page.Panels[I].Shape);
+    G:=PanelRegion(Page.Panels[I],Point(0,0),1);
     try if PtInRegion(G,Round(P.X),Round(P.Y)) then Exit(I); finally Winapi.Windows.DeleteObject(G); end;
   end;
 end;
@@ -717,6 +999,7 @@ procedure TMainForm.CancelDrag;
 begin
   if not FDragging then Exit;
   FDragging:=False; FCanvas.MouseCapture:=False;
+  FDragVertex:=-1;
   if FDragMoved then begin FProject.Restore(FDragSnapshot); RefreshUI; end;
   FDragMoved:=False; FDragSnapshot:=''; FCanvas.Invalidate;
 end;
@@ -733,9 +1016,18 @@ begin
   // VCL dispatches DblClick before its trailing MouseDown(ssDouble).
   // Do not restart a drag or steal the text editor's focus after that event.
   if ssDouble in Shift then Exit;
-  if (Page=nil) or not HasCharacter or (Button<>mbLeft) then Exit; P:=ToPage(X,Y);
+  if (Page=nil) or not HasCharacter then Exit;
+  if (Button=mbRight) and (FTool=0) and (FTabs.ActivePageIndex=1) then begin
+    CancelDrag; EditVertexContext(ToPage(X,Y)); Exit;
+  end;
+  if (Button=mbRight) and (FTool in [8,9]) then begin
+    if (FTool=8) and (FGeometryPoints.Count>0) then FGeometryPoints.Delete(FGeometryPoints.Count-1);
+    if (FTool=9) and (FSplitStage>0) then Dec(FSplitStage);
+    FCanvas.Invalidate; FStatus.SimpleText:='直前の指定へ戻りました。Escで全体を中止できます。'; Exit;
+  end;
+  if Button<>mbLeft then Exit; P:=ToPage(X,Y);
   ActiveControl:=FView;
-  Handle:=0; Selected:=TRectF.Empty;
+  Handle:=0; FDragVertex:=-1; Selected:=TRectF.Empty;
   if FTool=0 then begin
     if (FTabs.ActivePageIndex=3) and (FBalloonIndex>=0) and (FBalloonIndex<Page.Balloons.Count) then
       Selected:=Page.Balloons[FBalloonIndex].Bounds
@@ -744,15 +1036,23 @@ begin
       if FTabs.ActivePageIndex=2 then Selected:=FRenderer.ImageBounds(FProject,Page.Panels[FPanelIndex]);
     end;
     Handle:=HitHandle(Selected,P,9/FScale);
+    if (Handle=0) and (FTabs.ActivePageIndex=1) and (FPanelIndex>=0) and (FPanelIndex<Page.Panels.Count) then
+      FDragVertex:=HitVertex(Page.Panels[FPanelIndex],P);
   end;
-  if (Handle=0) and not FPageRect.Contains(Point(X,Y)) then Exit;
+  if (Handle=0) and not FPageRect.Contains(Point(X,Y)) and not (FTool in [8,9]) then Exit;
+  if FTool=9 then begin SplitClick(P); Exit; end;
+  if FTool=8 then begin
+    if FImages.Count=0 then Exit;
+    if not (ssAlt in Shift) then P:=SnapCreationPoint(P); PolygonClick(P); Exit;
+  end;
   if FTool=7 then begin
     if FBalloonIndex<0 then Exit; Checkpoint; Balloon:=Page.Balloons[FBalloonIndex];
     Balloon.HasTail:=True; Balloon.TailX:=P.X; Balloon.TailY:=P.Y; FTool:=0; Changed; Exit;
   end;
   if FTool in [1,2,3,5,6] then begin
     if FImages.Count=0 then begin ShowMessage('画像管理で画像を登録してください。'); Exit; end;
-    if not FFirst then begin FStart:=P; FFirst:=True; FStatus.SimpleText:='2点目をクリックしてください。'; FCanvas.Invalidate; Exit; end;
+    if (FTool in [1,2,3]) and not (ssAlt in Shift) then P:=SnapCreationPoint(P);
+    if not FFirst then begin FStart:=P; FLast:=P; FFirst:=True; FStatus.SimpleText:='2点目をクリックしてください。'; FCanvas.Invalidate; Exit; end;
     R:=TRectF.Create(Min(P.X,FStart.X),Min(P.Y,FStart.Y),Max(P.X,FStart.X),Max(P.Y,FStart.Y));
     if (R.Width<30) or (R.Height<30) then Exit; Checkpoint; FFirst:=False;
     if FTool<5 then begin Panel:=TComicPanel.Create; Panel.Bounds:=R; Panel.Shape:=FTool-1; Panel.Number:=Page.Panels.Count+1;
@@ -768,7 +1068,7 @@ begin
     FPanelIndex:=HitPanel(P); if FPanelIndex>=0 then begin Checkpoint; Page.Panels[FPanelIndex].Number:=FNumber; Inc(FNumber); Changed; end;
     UpdateIconState; FCanvas.Invalidate; Exit;
   end;
-  if Handle=0 then begin
+  if (Handle=0) and (FDragVertex<0) then begin
     FBalloonIndex:=-1; if FTabs.ActivePageIndex=3 then FBalloonIndex:=HitBalloon(P);
     FPanelIndex:=HitPanel(P);
   end;
@@ -779,6 +1079,8 @@ begin
     FDragTailX:=Balloon.TailX; FDragTailY:=Balloon.TailY;
   end else if FPanelIndex>=0 then begin
     Panel:=Page.Panels[FPanelIndex]; FDragBounds:=Panel.Bounds; FDragZoom:=Panel.Zoom;
+    FDragVertices:=Copy(Panel.Vertices,0,Length(Panel.Vertices));
+    if FDragVertex>=0 then begin FDragVertices:=Panel.Outline; FDragImageBounds:=FRenderer.ImageBounds(FProject,Panel); end;
     if FTabs.ActivePageIndex=2 then begin
       FDragBounds:=FRenderer.ImageBounds(FProject,Panel);
       SyncZoom;
@@ -792,13 +1094,28 @@ begin
   UpdateIconState; FCanvas.Invalidate;
 end;
 procedure TMainForm.MouseMove(Sender: TObject; Shift: TShiftState; X,Y: Integer);
-var P,Delta: TPointF; R: TRectF; Panel: TComicPanel;
+var P,Delta: TPointF; R: TRectF; Panel: TComicPanel; Candidate: TArray<TPointF>; I: Integer;
 begin
-  if not FDragging or (Page=nil) then Exit; P:=ToPage(X,Y);
+  if Page=nil then Exit; P:=ToPage(X,Y);
+  if not FDragging then begin
+    if FFirst or (FGeometryPoints.Count>0) or (FSplitStage>0) then begin
+      if (FTool in [1,2,3,8]) and not (ssAlt in Shift) then P:=SnapCreationPoint(P);
+      FLast:=P; FCanvas.Invalidate;
+    end;
+    Exit;
+  end;
   if not (ssLeft in Shift) then begin CancelDrag; Exit; end;
   Delta:=TPointF.Create(P.X-FStart.X,P.Y-FStart.Y);
   if not FDragMoved and (Abs(Delta.X)*FScale<1) and (Abs(Delta.Y)*FScale<1) then Exit;
   FDragMoved:=True; R:=FDragBounds;
+  if (FDragVertex>=0) and (FPanelIndex>=0) then begin
+    Candidate:=Copy(FDragVertices,0,Length(FDragVertices));
+    Candidate[FDragVertex]:=TPointF.Create(FDragVertices[FDragVertex].X+Delta.X,FDragVertices[FDragVertex].Y+Delta.Y);
+    if not (ssAlt in Shift) then Candidate[FDragVertex]:=SnapCreationPoint(Candidate[FDragVertex],Page.Panels[FPanelIndex].ID);
+    if not ValidPolygon(Candidate) then begin FStatus.SimpleText:='交差やゼロ面積になる頂点移動は確定できません。'; Exit; end;
+    Panel:=Page.Panels[FPanelIndex]; Panel.SetVertices(Candidate); PreservePanelImage(Panel,FDragImageBounds);
+    FLast:=P; FCanvas.Invalidate; Exit;
+  end;
   if (FTabs.ActivePageIndex=2) and (FPanelIndex>=0) then begin
     Panel:=Page.Panels[FPanelIndex];
     if FDragHandle<>0 then R:=ResizeImageRect(FDragBounds,Delta,FDragHandle,0.1/Max(0.1,FDragZoom))
@@ -817,7 +1134,19 @@ begin
         end;
         Bounds:=R;
       end;
-    end else if FPanelIndex>=0 then Page.Panels[FPanelIndex].Bounds:=R;
+    end else if FPanelIndex>=0 then begin
+      Panel:=Page.Panels[FPanelIndex];
+      if Length(FDragVertices)>0 then begin
+        SetLength(Candidate,Length(FDragVertices));
+        for I:=0 to High(Candidate) do Candidate[I]:=TPointF.Create(
+          R.Left+(FDragVertices[I].X-FDragBounds.Left)*R.Width/FDragBounds.Width,
+          R.Top+(FDragVertices[I].Y-FDragBounds.Top)*R.Height/FDragBounds.Height);
+        if not ValidPolygon(Candidate) then begin
+          FStatus.SimpleText:='縮小後の多角形が小さすぎるため、直前の有効な形を維持します。'; Exit;
+        end;
+        Panel.SetVertices(Candidate);
+      end else Panel.SetBounds(R);
+    end;
   end;
   FLast:=P; FCanvas.Invalidate;
 end;
@@ -829,12 +1158,13 @@ begin
     FUndo.Add(FDragSnapshot); FRedo.Clear; if FUndo.Count>40 then FUndo.Delete(0); Changed;
   end;
   FDragSnapshot:=''; FDragMoved:=False;
+  FDragVertex:=-1;
 end;
 procedure TMainForm.DeleteObject(Sender: TObject);
 var I: Integer; UID: string;
 begin
   if Page=nil then Exit;
-  if TButton(Sender).Tag=1 then begin
+  if TControl(Sender).Tag=1 then begin
     if FBalloonIndex<0 then Exit; Checkpoint; Page.Balloons.Delete(FBalloonIndex); FBalloonIndex:=-1;
   end else begin
     if FPanelIndex<0 then Exit; Checkpoint; UID:=Page.Panels[FPanelIndex].ID;
@@ -872,6 +1202,19 @@ begin
   if (Page=nil) or (FBalloonIndex<0) then Exit; Checkpoint; B:=Page.Balloons[FBalloonIndex];
   B.Text:=FText.Text; B.Vertical:=FVertical.Checked; B.Transparent:=FTransparent.Checked;
   B.Overflow:=FOverflow.Checked; B.FontSize:=StrToIntDef(FFont.Text,40); Changed;
+end;
+procedure TMainForm.TextInputDialog(Sender: TObject);
+var Dialog: TComicTextDialog;
+begin
+  if (Page=nil) or (FBalloonIndex<0) or (FBalloonIndex>=Page.Balloons.Count) then Exit;
+  CancelDrag; Dialog:=TComicTextDialog.CreateEditor(Self,FText.Text,FVertical.Checked,FTesting);
+  try
+    Dialog.ShowModal; FinishTextDialog(Dialog);
+  finally Dialog.Free; end;
+end;
+procedure TMainForm.FinishTextDialog(Dialog: TComicTextDialog);
+begin
+  if Dialog.ModalResult=mrOK then begin FText.Text:=Dialog.Editor.Text; ApplyText(nil); end;
 end;
 procedure TMainForm.Tail(Sender: TObject);
 begin
@@ -918,7 +1261,7 @@ begin
     if (Key>=Ord('1')) and (Key<=Ord('4')) then begin FModeButtons[Key-Ord('1')].Click; Key:=0; Exit; end;
   end;
   if ActiveControl=FText then Exit;
-  if Key=VK_ESCAPE then begin CancelDrag; FFirst:=False; FTool:=0; UpdateIconState; FCanvas.Invalidate; Key:=0; end;
+  if Key=VK_ESCAPE then begin CancelDrag; ResetGeometryInput; FFirst:=False; FTool:=0; UpdateIconState; FCanvas.Invalidate; Key:=0; end;
 end;
 
 procedure TMainForm.SmokeTest(const Folder: string);
@@ -1028,6 +1371,97 @@ var B: TBitmap; A,A2: TComicAsset; P: TComicPanel; Balloon: TComicBalloon;
     Check(KeyValue=VK_ESCAPE,'IME editor keeps its own Esc handling'); ActiveControl:=nil;
     FTabs.ActivePageIndex:=0; TabChanged(nil);
   end;
+  procedure TextSessionChecks;
+  var Dialog: TComicTextDialog; Before,NewText,Emoji: string; KeyValue: Word; OldUndo,OldRedo: TList<string>;
+    OldPPI: Integer; OriginalScaled: Boolean; PPI,K: Integer; PNG: TPngImage;
+    procedure Command(Key: Word; Shift: TShiftState=[]);
+    begin KeyValue:=Key; Dialog.Editor.Command(KeyValue,Shift); end;
+    procedure SaveEditor(const Name: string);
+    begin
+      Dialog.HandleNeeded; B.SetSize(Dialog.ClientWidth,Dialog.ClientHeight); Dialog.PaintTo(B.Canvas,0,0);
+      PNG.Assign(B); PNG.SaveToFile(TPath.Combine(Folder,Name+'.png'));
+    end;
+  begin
+    Before:=FProject.Snapshot; OldUndo:=FUndo; OldRedo:=FRedo;
+    FUndo:=TList<string>.Create; FRedo:=TList<string>.Create; PNG:=TPngImage.Create;
+    Emoji:=WideChar($D83D)+WideChar($DE00); NewText:='A'+Emoji+#13#10+'B';
+    FTabs.ActivePageIndex:=3; TabChanged(nil); FBalloonIndex:=0; FPanelIndex:=0;
+    try
+      Dialog:=TComicTextDialog.CreateEditor(Self,Page.Balloons[0].Text,False,True);
+      try
+        Check(Dialog.Editor.SessionActive and (Dialog.Editor.Input.ImeMode=imOpen),'dedicated input session enables only its IME receiver');
+        Dialog.Editor.Text:='A'+Emoji+#13#10+'B';
+        Command(VK_LEFT); Check(Dialog.Editor.CaretIndex=5,'library caret moves before final character');
+        Command(VK_LEFT); Check(Dialog.Editor.CaretIndex=3,'library caret crosses CRLF as one boundary');
+        Command(VK_LEFT); Check(Dialog.Editor.CaretIndex=1,'library caret crosses surrogate pair without splitting');
+        Command(VK_RIGHT,[ssShift]); Command(VK_BACK);
+        Check(Dialog.Editor.Text='A'+#13#10+'B','selected surrogate pair deletes as a complete unit');
+        Dialog.Editor.Text:=''; Dialog.Editor.Input.Perform(WM_CHAR,Ord('日'),0); Dialog.Editor.Input.Perform(WM_CHAR,Ord('本'),0);
+        Check((Dialog.Editor.Text='日本') and (Dialog.Editor.Input.Text=''),'copied IME receiver WM_CHAR forwards committed text into external buffer');
+        Dialog.Editor.Input.Perform(WM_IME_STARTCOMPOSITION,0,0);
+        Check(Dialog.Editor.Composing,'IME start message activates pending composition state');
+        Command(VK_RETURN,[ssCtrl]);
+        Check((Dialog.ModalResult=0) and (Dialog.Editor.Text='日本'),'pending IME composition cannot commit whole dialog');
+        KeyValue:=VK_RETURN; Dialog.KeyDown(KeyValue,[ssCtrl]);
+        Check((KeyValue=VK_RETURN) and (Dialog.ModalResult=0),'dialog shortcut passes pending composition to IME receiver');
+        Dialog.Editor.Input.Perform(WM_IME_ENDCOMPOSITION,0,0);
+        Check(not Dialog.Editor.Composing,'IME end message clears pending composition state');
+        Dialog.Editor.Text:=NewText; SaveEditor('text-horizontal-96');
+        Check(Dialog.Editor.CaretBounds.Height>Dialog.Editor.CaretBounds.Width,'horizontal input preview uses a vertical pseudo caret');
+        for K:=0 to Dialog.ComponentCount-1 do if (Dialog.Components[K] is TButton) and
+          (Pos('取消',TButton(Dialog.Components[K]).Caption)>0) then Dialog.ActiveControl:=TWinControl(Dialog.Components[K]);
+        KeyValue:=VK_ESCAPE; Dialog.KeyDown(KeyValue,[]); FinishTextDialog(Dialog);
+        Check(KeyValue=0,'Esc cancels dedicated dialog while cancel button has focus');
+        Check((Dialog.ModalResult=mrCancel) and (FProject.Snapshot=Before) and (FUndo.Count=0),
+          'dedicated text cancel preserves balloon and undo history');
+        Check(not Dialog.Editor.SessionActive and not Dialog.Editor.Input.Enabled and
+          (Dialog.Editor.Input.ImeMode=imDisable),'closing input session disables receiver and ends composition');
+      finally Dialog.Free; end;
+      Dialog:=TComicTextDialog.CreateEditor(Self,Page.Balloons[0].Text,True,True);
+      try
+        Dialog.Editor.Text:=NewText; SaveEditor('text-vertical-96');
+        Check(Dialog.Editor.CaretBounds.Width>Dialog.Editor.CaretBounds.Height,'vertical input preview uses the requested horizontal pseudo caret');
+        OldPPI:=Dialog.CurrentPPI; OriginalScaled:=Dialog.Scaled;
+        try
+          for PPI in [96,144] do begin
+            Dialog.Scaled:=True; Dialog.ScaleForPPI(PPI); Dialog.Scaled:=False;
+            Dialog.ClientWidth:=MulDiv(680,PPI,96); Dialog.ClientHeight:=MulDiv(440,PPI,96); Dialog.Realign;
+            SaveEditor('text-vertical-'+IntToStr(PPI));
+            Check((Dialog.CurrentPPI=PPI) and (Dialog.Editor.CaretBounds.Width>Dialog.Editor.CaretBounds.Height),
+              'vertical pseudo caret remains horizontal at VCL PPI '+IntToStr(PPI));
+          end;
+        finally
+          Dialog.Scaled:=True; Dialog.ScaleForPPI(OldPPI);
+          Dialog.ClientWidth:=MulDiv(680,OldPPI,96); Dialog.ClientHeight:=MulDiv(440,OldPPI,96); Dialog.Scaled:=OriginalScaled;
+        end;
+        Check(FProject.Snapshot=Before,'typing and DPI preview do not mutate the balloon before commit');
+        for K:=0 to Dialog.ComponentCount-1 do if (Dialog.Components[K] is TButton) and
+          (Pos('確定',TButton(Dialog.Components[K]).Caption)>0) then Dialog.ActiveControl:=TWinControl(Dialog.Components[K]);
+        KeyValue:=VK_RETURN; Dialog.KeyDown(KeyValue,[ssCtrl]); FinishTextDialog(Dialog);
+        Check(KeyValue=0,'Ctrl Enter commits dedicated dialog while accept button has focus');
+        Check((Dialog.ModalResult=mrOK) and (Page.Balloons[0].Text=NewText) and (FUndo.Count=1),
+          'dedicated text commit updates balloon as one undo operation');
+        FProject.Save; Loaded:=TComicProject.Create;
+        try Loaded.Load(TPath.Combine(FProject.Folder,'Project.json'));
+          Check(Loaded.Pages[0].Balloons[0].Text=NewText,'committed Unicode and multiline buffer save and reload');
+        finally Loaded.Free; end;
+        Undo(nil); Check(Page.Balloons[0].Text='漫画を作ろう！','dedicated text undo restores previous balloon text');
+        Redo(nil); Check(Page.Balloons[0].Text=NewText,'dedicated text redo restores committed Unicode text'); Undo(nil);
+      finally Dialog.Free; end;
+      Dialog:=TComicTextDialog.CreateEditor(Self,NewText,False,True);
+      try
+        Check(Dialog.Editor.Text=NewText,'dedicated text reopens existing multiline Unicode buffer');
+        Command(VK_HOME,[ssCtrl]); Command(VK_DELETE);
+        Check(Dialog.Editor.Text=Emoji+#13#10+'B','library delete at start preserves following surrogate pair');
+        Command(VK_ESCAPE);
+        Check(not Dialog.Visible,'all dedicated text checks remain hidden without focus transfer');
+      finally Dialog.Free; end;
+      Check(FProject.Snapshot=Before,'text session tests restore complete original project');
+    finally
+      PNG.Free; FUndo.Free; FRedo.Free; FUndo:=OldUndo; FRedo:=OldRedo;
+      FText.Text:=Page.Balloons[0].Text; FTabs.ActivePageIndex:=0; TabChanged(nil); ActiveControl:=nil; RefreshUI;
+    end;
+  end;
   procedure RenderChecks;
   var Clone: TComicProject; Reference,Shifted,Warm: TBitmap; Extra: TComicBalloon;
     X,Y,SavedDC: Integer; Same: Boolean;
@@ -1068,7 +1502,354 @@ var B: TBitmap; A,A2: TComicAsset; P: TComicPanel; Balloon: TComicBalloon;
       end;
       Check(Same,'repeated canvas rendering keeps multiple balloon fonts stable');
       Reference.SaveToFile(TPath.Combine(Folder,'render-balloons.bmp'));
+      Clone.Pages[0].Panels[0].SetVertices([TPointF.Create(100,100),TPointF.Create(1100,100),TPointF.Create(1100,1500)]);
+      Extra.Bounds:=TRectF.Create(100,900,600,1400); Extra.HasTail:=False;
+      FRenderer.Draw(Reference.Canvas,Clone,Clone.Pages[0],Rect(0,0,600,850),False);
+      SavedDC:=SaveDC(Shifted.Canvas.Handle);
+      try SetViewportOrgEx(Shifted.Canvas.Handle,75,50,nil);
+        FRenderer.Draw(Shifted.Canvas,Clone,Clone.Pages[0],Rect(0,0,600,850),False);
+      finally RestoreDC(Shifted.Canvas.Handle,SavedDC); Shifted.Canvas.Refresh; end;
+      Same:=True; X:=3;
+      while X<600 do begin Y:=3;
+        while Y<850 do begin
+          if Reference.Canvas.Pixels[X,Y]<>Shifted.Canvas.Pixels[X+75,Y+50] then Same:=False;
+          Inc(Y,13);
+        end;
+        Inc(X,13);
+      end;
+      Check(Same,'polygon and owner-clipped balloon match under translated DC rendering');
+      Check(Reference.Canvas.Pixels[80,600]=clWhite,'polygon owner clips balloon outside actual triangle');
+      Reference.SaveToFile(TPath.Combine(Folder,'render-polygon-balloons.bmp'));
     finally Warm.Free; Shifted.Free; Reference.Free; Clone.Free; end;
+  end;
+  procedure GeometryChecks;
+  var OriginalProject,Reloaded: TComicProject; OriginalUndo,OriginalRedo: TList<string>;
+    Model,Before,ImageID,OwnerID: string; Panel,Thin: TComicPanel;
+    Points,One,Two: TArray<TPointF>; C,D,Q: TPointF; ImageRect,Actual,OldBounds: TRectF;
+    PX,PY,UndoCount,OldIndex,X,Y: Integer; KeyValue: Word; OldSnap,SamePixels: Boolean;
+    Layout,LayoutCopy: TComicLayout; J: TJSONObject; PNG: TPngImage; Reference: TBitmap;
+    procedure SelectTool(Tag: Integer);
+    var Button: TComicIconButton;
+    begin
+      for Button in FIconButtons do if (Button.Role=brTool) and (Button.Tag=Tag) and (Button.Context=1) then begin Button.Click; Exit; end;
+      raise Exception.Create('Geometry icon missing.');
+    end;
+    procedure Click(X,Y: Single; Alt: Boolean=False);
+    begin
+      PX:=FPageRect.Left+Round(X*FScale); PY:=FPageRect.Top+Round(Y*FScale);
+      if Alt then begin MouseDown(FCanvas,mbLeft,[ssAlt],PX,PY); MouseUp(FCanvas,mbLeft,[ssAlt],PX,PY); end
+      else begin
+        FCanvas.Perform(WM_LBUTTONDOWN,MK_LBUTTON,MakeLParam(PX,PY));
+        FCanvas.Perform(WM_LBUTTONUP,0,MakeLParam(PX,PY));
+      end;
+    end;
+    procedure SameImage(const Message: string);
+    var K: Integer;
+    begin
+      for K:=0 to Page.Panels.Count-1 do begin
+        Actual:=FRenderer.ImageBounds(FProject,Page.Panels[K]);
+        Check((Abs(Actual.Left-ImageRect.Left)<0.01) and (Abs(Actual.Top-ImageRect.Top)<0.01) and
+          (Abs(Actual.Right-ImageRect.Right)<0.01) and (Abs(Actual.Bottom-ImageRect.Bottom)<0.01),Message+' '+IntToStr(K));
+      end;
+    end;
+    procedure RoundTrip(const Message: string);
+    begin
+      FProject.Save; Reloaded:=TComicProject.Create;
+      try Reloaded.Load(TPath.Combine(FProject.Folder,'Project.json'));
+        Check(Reloaded.Snapshot=FProject.Snapshot,Message);
+      finally Reloaded.Free; end;
+    end;
+    procedure SnapOrderChecks;
+    var OriginalPanels,Temporary: TObjectList<TComicPanel>; A,B: TComicPanel;
+      First,Second,P: TPointF; OriginalScale: Double; OriginalSnap: Boolean; Before: string; History: Integer;
+      procedure Reverse;
+      begin Temporary.Move(0,1); end;
+    begin
+      OriginalPanels:=Page.Panels; Temporary:=TObjectList<TComicPanel>.Create;
+      OriginalScale:=FScale; OriginalSnap:=FSnap.Checked; Before:=FProject.Snapshot; History:=FUndo.Count;
+      try
+        Page.Panels:=Temporary; FScale:=1; FSnap.Checked:=True;
+        A:=TComicPanel.Create; A.Bounds:=TRectF.Create(100,100,500,500); Temporary.Add(A);
+        B:=TComicPanel.Create; B.Bounds:=TRectF.Create(102,800,400,1100); Temporary.Add(B);
+        P:=TPointF.Create(102,103); First:=SnapCreationPoint(P);
+        Check((First.X=100) and (First.Y=100),'nearest vertex takes priority over a later panel axis');
+        Reverse; Second:=SnapCreationPoint(P);
+        Check(First=Second,'vertex snap is independent of panel iteration order');
+        P:=TPointF.Create(105,300); First:=SnapCreationPoint(P);
+        Check((First.X=100) and (First.Y=300),'nearest real edge takes priority over an unrelated closer axis');
+        Reverse; Second:=SnapCreationPoint(P);
+        Check(First=Second,'edge snap is independent of panel iteration order');
+        P:=TPointF.Create(105,650); First:=SnapCreationPoint(P); Reverse; Second:=SnapCreationPoint(P);
+        Check((First.X=102) and (First.Y=650) and (First=Second),'axis fallback chooses the closest axis independent of order');
+        B.Bounds:=TRectF.Create(104,100,504,500);
+        P:=TPointF.Create(102,100); First:=SnapCreationPoint(P); Reverse; Second:=SnapCreationPoint(P);
+        Check((First.X=100) and (First.Y=100) and (First=Second),'equidistant vertices use a deterministic coordinate tie break');
+        P:=TPointF.Create(102,300); First:=SnapCreationPoint(P); Reverse; Second:=SnapCreationPoint(P);
+        Check((First.X=100) and (First.Y=300) and (First=Second),'equidistant edges use a deterministic coordinate tie break');
+        B.Bounds:=TRectF.Create(104,800,504,1100);
+        P:=TPointF.Create(102,650); First:=SnapCreationPoint(P); Reverse; Second:=SnapCreationPoint(P);
+        Check((First.X=100) and (First.Y=650) and (First=Second),'equidistant axes use a deterministic coordinate tie break');
+        FSnap.Checked:=False;
+        Check(SnapCreationPoint(TPointF.Create(102,103))=TPointF.Create(102,103),'disabled snapping preserves exact input coordinates');
+      finally Page.Panels:=OriginalPanels; Temporary.Free; FScale:=OriginalScale; FSnap.Checked:=OriginalSnap; end;
+      Check((FProject.Snapshot=Before) and (FUndo.Count=History),'snap order checks preserve project content and undo history');
+    end;
+    procedure VertexDPI(PPI: Integer);
+    var OriginalPPI,OriginalW,OriginalH: Integer; OriginalScaled: Boolean; H: TPointF; X,Y: Integer;
+    begin
+      OriginalPPI:=CurrentPPI; OriginalW:=Width; OriginalH:=Height; OriginalScaled:=Scaled;
+      try
+        Scaled:=True; ScaleForPPI(PPI); Scaled:=False;
+        Width:=MulDiv(940,PPI,96); Height:=MulDiv(660,PPI,96); Realign;
+        Page.Panels.Clear; Page.Balloons.Clear; FUndo.Clear; FRedo.Clear;
+        Panel:=TComicPanel.Create; Panel.Bounds:=TRectF.Create(100,100,1100,1600); Panel.ImageID:=ImageID; Page.Panels.Add(Panel);
+        ImageRect:=FRenderer.ImageBounds(FProject,Panel); RefreshUI; SelectTool(0); FPanelIndex:=0;
+        Capture('geometry-vertex-dpi'+IntToStr(PPI)+'-before'); H:=VertexHandles(Panel)[0];
+        X:=FPageRect.Left+Round(H.X*FScale); Y:=FPageRect.Top+Round(H.Y*FScale);
+        FCanvas.Perform(WM_LBUTTONDOWN,MK_LBUTTON,MakeLParam(X,Y));
+        Check(FDragVertex=0,'vertex handle is selectable at VCL PPI '+IntToStr(PPI));
+        MouseMove(FCanvas,[ssLeft],X+MulDiv(20,PPI,96),Y+MulDiv(12,PPI,96));
+        FCanvas.Perform(WM_LBUTTONUP,0,MakeLParam(X+MulDiv(20,PPI,96),Y+MulDiv(12,PPI,96)));
+        Check((Page.Panels[0].Shape=3) and ValidPolygon(Page.Panels[0].Vertices),'vertex drag remains valid at VCL PPI '+IntToStr(PPI));
+        SameImage('DPI vertex edit preserves image placement '+IntToStr(PPI));
+        RoundTrip('DPI vertex edit saves and reloads '+IntToStr(PPI));
+        Capture('geometry-vertex-dpi'+IntToStr(PPI)+'-after'); Undo(nil);
+        Check(Page.Panels[0].Shape=0,'DPI vertex edit undo '+IntToStr(PPI));
+      finally
+        Scaled:=True; ScaleForPPI(OriginalPPI); Width:=OriginalW; Height:=OriginalH; Scaled:=OriginalScaled; Realign;
+      end;
+    end;
+  begin
+    OriginalProject:=FProject; OriginalUndo:=FUndo; OriginalRedo:=FRedo;
+    Model:=OriginalProject.Snapshot; OldIndex:=FPageIndex; OldSnap:=FSnap.Checked;
+    FProject:=TComicProject.Create; FUndo:=TList<string>.Create; FRedo:=TList<string>.Create;
+    PNG:=TPngImage.Create; Reference:=TBitmap.Create;
+    try
+      FProject.Initialize('Geometry fixture','1'); FPageIndex:=0; FPanelIndex:=-1; FBalloonIndex:=-1;
+      ImageID:=FProject.ImportImage(TPath.Combine(Folder,'reference.bmp'),'').ID;
+      RefreshUI; FModeButtons[1].Click; FSnap.Checked:=False; Capture('geometry-empty');
+      Points:=[TPointF.Create(100,100),TPointF.Create(1100,100),TPointF.Create(1100,1600),TPointF.Create(100,1600)];
+      Check(ValidPolygon(Points) and ConvexPolygon(Points),'rectangle is a valid convex polygon');
+      Check(BandEndpoints(Points,TPointF.Create(100,700),TPointF.Create(1100,700),TPointF.Create(100,740),C,D) and
+        SplitPolygonBand(Points,TPointF.Create(100,700),TPointF.Create(1100,700),C,One,Two),
+        'horizontal strip produces two valid polygons');
+      Check(Abs(PolygonArea(One)+PolygonArea(Two)-1460000)<1,'horizontal strip removes exactly its 40px gutter');
+      Check(BandEndpoints(Points,TPointF.Create(500,100),TPointF.Create(500,1600),TPointF.Create(540,100),C,D) and
+        SplitPolygonBand(Points,TPointF.Create(500,100),TPointF.Create(500,1600),C,One,Two),
+        'vertical strip works in either winding direction');
+      Check(BandEndpoints(Points,TPointF.Create(100,500),TPointF.Create(1100,1100),TPointF.Create(100,550),C,D) and
+        SplitPolygonBand(Points,TPointF.Create(100,500),TPointF.Create(1100,1100),C,One,Two),
+        'diagonal strip produces two convex clipped polygons');
+      Check(not BandEndpoints(Points,TPointF.Create(100,700),TPointF.Create(1100,700),TPointF.Create(100,702),C,D),
+        'strip rejects a width below four output pixels');
+      Check(not SplitPolygonBand(Points,TPointF.Create(150,700),TPointF.Create(1100,700),TPointF.Create(100,740),One,Two),
+        'strip rejects an endpoint away from the owner boundary');
+      Check(not ValidPolygon([TPointF.Create(100,100),TPointF.Create(1100,1600),TPointF.Create(100,1600),TPointF.Create(1100,100)]),
+        'self crossing polygon is rejected');
+      Check(not ValidPolygon([TPointF.Create(100,100),TPointF.Create(100,100),TPointF.Create(1100,1600)]),
+        'duplicate adjacent vertex is rejected');
+      Check(not ValidPolygon([TPointF.Create(100,100),TPointF.Create(600,100),TPointF.Create(300,100),TPointF.Create(600,800),TPointF.Create(100,800)]),
+        'overlapping adjacent edges are rejected');
+      Check(not ValidPolygon([TPointF.Create(NaN,100),TPointF.Create(1100,100),TPointF.Create(1100,1600)]),
+        'nonfinite polygon coordinate is rejected');
+      Points:=[TPointF.Create(100,100),TPointF.Create(1100,100),TPointF.Create(600,700),TPointF.Create(1100,1600),TPointF.Create(100,1600)];
+      Check(ValidPolygon(Points) and not ConvexPolygon(Points),'concave polygon remains editable but cannot use convex splitting');
+
+      SelectTool(8); Before:=FProject.Snapshot; UndoCount:=FUndo.Count;
+      Click(100,100); Click(1100,100); Click(1100,1500);
+      Check((Page.Panels.Count=0) and (FProject.Snapshot=Before) and (FUndo.Count=UndoCount),
+        'polygon pending clicks do not modify saved content or history');
+      MouseDown(FCanvas,mbRight,[],PX,PY);
+      Check(FGeometryPoints.Count=2,'polygon right click removes only the last pending vertex');
+      Click(1100,1500); Click(100,100);
+      Check((Page.Panels.Count=1) and (Page.Panels[0].Shape=3) and (Length(Page.Panels[0].Vertices)=3),
+        'real VCL clicks close and create a polygon');
+      Panel:=Page.Panels[0]; Panel.ImageID:=ImageID; OwnerID:=Panel.ID;
+      Check((HitPanel(TPointF.Create(150,1400))=-1) and (HitPanel(TPointF.Create(900,600))=0),
+        'polygon hit testing excludes empty bounding-box corners');
+      Check(Pos('"version":2',FProject.Snapshot)>0,'polygon project advertises version two');
+      RoundTrip('polygon vertices image UID and bounds survive save and reload');
+      FSnap.Checked:=True; Q:=SnapCreationPoint(TPointF.Create(61,62));
+      Check((Q.X=60) and (Q.Y=60),'creation snaps to the page frame');
+      Q:=SnapCreationPoint(TPointF.Create(102,103));
+      Check((Q.X=Panel.Vertices[0].X) and (Q.Y=Panel.Vertices[0].Y),'creation snaps to existing vertices');
+      Q:=SnapCreationPoint(TPointF.Create(102,103),Panel.ID);
+      Check((Q.X=102) and (Q.Y=103),'vertex drag excludes its own moving panel from snap targets');
+      SnapOrderChecks;
+      SelectTool(8); Click(64,65,True);
+      Check((Abs(FGeometryPoints[0].X-60)>1) or (Abs(FGeometryPoints[0].Y-60)>1),'Alt bypasses creation snapping');
+      KeyValue:=VK_ESCAPE; ActiveControl:=FView; Key(Self,KeyValue,[]);
+      Check(FGeometryPoints.Count=0,'Esc cancels pending polygon points');
+      FSnap.Checked:=False;
+      Layout:=TComicLayout.Create; LayoutCopy:=TComicLayout.Create; Reloaded:=TComicProject.Create;
+      try
+        Layout.Name:='Polygon fixture'; Layout.Capture(FProject,Page);
+        J:=Layout.Json; try LayoutCopy.Read(J); finally J.Free; end;
+        Reloaded.Pages.Add(TComicPage.Create); LayoutCopy.Apply(Reloaded.Pages[0],600,850);
+        Check((Reloaded.Pages[0].Panels[0].Shape=3) and
+          (Abs(Reloaded.Pages[0].Panels[0].Vertices[1].X-Panel.Vertices[1].X/2)<0.001) and
+          (Reloaded.Pages[0].Panels[0].ImageID=''),'polygon template roundtrip scales vertices and excludes images');
+        Panel.Vertices[0].X:=105;
+        Check(Layout.Panels[0].Vertices[0].X<>Panel.Vertices[0].X,'template capture owns an independent vertex array');
+        Panel.Vertices[0].X:=100;
+      finally Reloaded.Free; LayoutCopy.Free; Layout.Free; end;
+      B.SetSize(600,850); FRenderer.Draw(B.Canvas,FProject,Page,Rect(0,0,600,850),False);
+      Check((B.Canvas.Pixels[80,650]=clWhite) and (B.Canvas.Pixels[450,300]<>clWhite),
+        'polygon image clipping follows the outline');
+      PNG.Assign(B); PNG.SaveToFile(TPath.Combine(Folder,'polygon-render.png'));
+      SelectTool(0); FPanelIndex:=0; Capture('geometry-polygon');
+      OldBounds:=Panel.Bounds; Before:=FProject.Snapshot;
+      PX:=FPageRect.Left+Round(OldBounds.Right*FScale); PY:=FPageRect.Top+Round(OldBounds.Bottom*FScale);
+      MouseDown(FCanvas,mbLeft,[],PX,PY); MouseMove(FCanvas,[ssLeft],PX-25,PY-25); MouseUp(FCanvas,mbLeft,[],PX-25,PY-25);
+      Check((Page.Panels[0].Bounds<>OldBounds) and ValidPolygon(Page.Panels[0].Vertices),'polygon handle resize transforms valid vertices');
+      Undo(nil); Check(Page.Panels[0].Bounds=OldBounds,'polygon resize undo restores outline bounds');
+      Redo(nil); RoundTrip('polygon resized outline survives redo and save reload');
+      Undo(nil);
+
+      Page.Panels.Clear; Page.Balloons.Clear; FUndo.Clear; FRedo.Clear;
+      Thin:=TComicPanel.Create;
+      Thin.SetVertices([TPointF.Create(100,100),TPointF.Create(1100,1100),TPointF.Create(1097,1098)]);
+      Page.Panels.Add(Thin); Before:=FProject.Snapshot; OldBounds:=Thin.Bounds;
+      Failed:=False; try Thin.SetBounds(TRectF.Create(100,100,130,130)); except Failed:=True; end;
+      Check(Failed and (FProject.Snapshot=Before),'thin triangle resize validates candidate atomically before mutation');
+      Checkpoint; Thin.SetBounds(TRectF.Create(100,100,600,600)); Changed;
+      Check(ValidPolygon(Thin.Vertices),'thin triangle valid shrink remains readable');
+      Undo(nil); Check(Page.Panels[0].Bounds=OldBounds,'thin triangle shrink undo restores original');
+      Redo(nil); RoundTrip('thin triangle valid shrink redo and saved reload');
+      SelectTool(0); FPanelIndex:=0; Capture('geometry-thin'); Before:=FProject.Snapshot; UndoCount:=FUndo.Count;
+      OldBounds:=Page.Panels[0].Bounds; PX:=FPageRect.Left+Round(OldBounds.Right*FScale); PY:=FPageRect.Top+Round(OldBounds.Bottom*FScale);
+      MouseDown(FCanvas,mbLeft,[],PX,PY); MouseMove(FCanvas,[ssLeft],PX-10000,PY-10000); MouseUp(FCanvas,mbLeft,[],PX-10000,PY-10000);
+      Check((FProject.Snapshot=Before) and (FUndo.Count=UndoCount),'UI rejects extreme thin-triangle shrink without an undo entry');
+      RoundTrip('rejected thin-triangle shrink leaves a loadable project');
+
+      Page.Panels.Clear; Page.Balloons.Clear; FUndo.Clear; FRedo.Clear;
+      Panel:=TComicPanel.Create; Panel.Bounds:=TRectF.Create(100,100,1100,1600); Panel.ImageID:=ImageID;
+      Panel.Zoom:=1.7; Panel.PanX:=52; Panel.PanY:=-33; Page.Panels.Add(Panel); OwnerID:=Panel.ID;
+      Balloon:=TComicBalloon.Create; Balloon.Bounds:=TRectF.Create(400,1100,700,1300);
+      Balloon.PanelID:=OwnerID; Balloon.Text:='分割後も保持'; Page.Balloons.Add(Balloon);
+      ImageRect:=FRenderer.ImageBounds(FProject,Panel); RefreshUI; Capture('geometry-before-split');
+      Reference.SetSize(600,850); FRenderer.Draw(Reference.Canvas,FProject,Page,Rect(0,0,600,850),False);
+      SelectTool(9); Before:=FProject.Snapshot; UndoCount:=FUndo.Count;
+      Click(100,700); Click(1100,700); Click(100,740);
+      Check((FSplitStage=3) and (FProject.Snapshot=Before) and (FUndo.Count=UndoCount),
+        'first three split clicks only preview and do not change project history');
+      Click(500,1400);
+      Check((FSplitStage=3) and (Page.Panels.Count=1),'incorrect fourth split point cannot commit');
+      Click(FSplitD.X,FSplitD.Y);
+      Check((Page.Panels.Count=2) and (FSplitStage=0) and (Page.Panels[0].ID=OwnerID) and
+        (Page.Panels[1].ID<>OwnerID) and (Page.Panels[0].ImageID=ImageID) and (Page.Panels[1].ImageID=ImageID),
+        'four VCL split clicks create two panels with stable original UID and shared image');
+      SameImage('split preserves global image placement');
+      Check((Page.Balloons[0].Text='分割後も保持') and
+        PolygonContains(Page.Panels[1].Vertices,Page.Balloons[0].Bounds.CenterPoint) and
+        (Page.Balloons[0].PanelID=Page.Panels[1].ID),'split reassigns balloon owner while preserving its text and position');
+      Check(HitPanel(TPointF.Create(600,720))=-1,'split gutter is not selectable');
+      RoundTrip('split polygon project save and reload');
+      Check(ExportSequence(FProject,FRenderer,False)=1,'split polygon exports to sequential PNG');
+      Check(ExportSequence(FProject,FRenderer,False)=0,'unchanged polygon export uses content cache');
+      Capture('geometry-after-split'); FRenderer.ExportPage(FProject,Page,TPath.Combine(Folder,'split-page.png'));
+      B.SetSize(600,850); FRenderer.Draw(B.Canvas,FProject,Page,Rect(0,0,600,850),False);
+      Check(B.Canvas.Pixels[300,360]=clWhite,'split gutter exports white without editing guides');
+      SamePixels:=True;
+      for X:=70 to 530 do if X mod 23=0 then
+        for Y:=70 to 780 do if Y mod 31=0 then begin
+          Q:=TPointF.Create(X*2,Y*2);
+          if (HitPanel(Q)<0) or Page.Balloons[0].Bounds.Contains(Q) then Continue;
+          if NearestEdgePoint(Page.Panels[HitPanel(Q)].Vertices,Q,C)<20 then Continue;
+          if B.Canvas.Pixels[X,Y]<>Reference.Canvas.Pixels[X,Y] then SamePixels:=False;
+        end;
+      Check(SamePixels,'split preserves rendered image pixels outside borders gutters and balloon');
+      Undo(nil);
+      Check((Page.Panels.Count=1) and (Page.Panels[0].Shape=0) and (Page.Panels[0].ID=OwnerID) and
+        (Page.Balloons[0].PanelID=OwnerID),'one undo restores the original unsplit panel and balloon owner');
+      Redo(nil); Check(Page.Panels.Count=2,'split redo reconstructs both polygon panels'); SameImage('split redo preserves image placement');
+      RoundTrip('split redo saves and reloads');
+      SelectTool(9); SplitClick(Page.Panels[0].Vertices[0]); KeyValue:=VK_ESCAPE; ActiveControl:=FView; Key(Self,KeyValue,[]);
+      Check(FSplitStage=0,'Esc cancels pending split input');
+      Page.Panels.Clear; Page.Balloons.Clear; FUndo.Clear; FRedo.Clear;
+      Panel:=TComicPanel.Create;
+      Panel.SetVertices([TPointF.Create(60,800),TPointF.Create(600,60),TPointF.Create(1140,800),TPointF.Create(600,1640)]);
+      Panel.ImageID:=ImageID; Panel.Zoom:=1.3; Panel.PanX:=-45; Panel.PanY:=25; Page.Panels.Add(Panel);
+      ImageRect:=FRenderer.ImageBounds(FProject,Panel); OwnerID:=Panel.ID; RefreshUI; Capture('geometry-diamond-before');
+      SelectTool(9); Click(60,800); Click(1140,800); Click(600,900);
+      Check(FSplitStage=3,'convex polygon can preview a split band');
+      Click(FSplitD.X,FSplitD.Y);
+      Check((Page.Panels.Count=2) and ConvexPolygon(Page.Panels[0].Vertices) and ConvexPolygon(Page.Panels[1].Vertices),
+        'four-click splitting also accepts an existing convex polygon');
+      SameImage('convex polygon split preserves image placement');
+      RoundTrip('convex polygon split saves and reloads'); Capture('geometry-diamond-split');
+      Undo(nil); Check((Page.Panels.Count=1) and (Page.Panels[0].ID=OwnerID) and (Length(Page.Panels[0].Vertices)=4),
+        'convex polygon split undo restores original vertices');
+      Redo(nil); Check(Page.Panels.Count=2,'convex polygon split redo restores result');
+      Page.Panels.Clear; Page.Balloons.Clear; FUndo.Clear; FRedo.Clear;
+      Panel:=TComicPanel.Create; Panel.Bounds:=TRectF.Create(100,100,1100,1600); Panel.ImageID:=ImageID;
+      Panel.Zoom:=1.6; Panel.PanX:=48; Panel.PanY:=-27; Page.Panels.Add(Panel); OwnerID:=Panel.ID;
+      Balloon:=TComicBalloon.Create; Balloon.PanelID:=OwnerID; Balloon.Text:='頂点編集';
+      Balloon.Bounds:=TRectF.Create(400,900,700,1100); Page.Balloons.Add(Balloon);
+      ImageRect:=FRenderer.ImageBounds(FProject,Panel); RefreshUI; SelectTool(0); FPanelIndex:=0; FSnap.Checked:=False;
+      Capture('geometry-vertex-before'); Points:=VertexHandles(Panel); Q:=Points[0];
+      PX:=FPageRect.Left+Round(Q.X*FScale); PY:=FPageRect.Top+Round(Q.Y*FScale);
+      FCanvas.Perform(WM_LBUTTONDOWN,MK_LBUTTON,MakeLParam(PX,PY));
+      Check(FDragVertex=0,'inside vertex handle is distinct from outer resize handles');
+      MouseMove(FCanvas,[ssLeft],PX+35,PY+20); FCanvas.Perform(WM_LBUTTONUP,0,MakeLParam(PX+35,PY+20));
+      Check((Page.Panels[0].Shape=3) and (Page.Panels[0].Vertices[0].X>100) and (Page.Panels[0].Vertices[0].Y>100),
+        'vertex drag converts rectangle into a valid independent polygon');
+      SameImage('vertex drag preserves image placement');
+      Check((Page.Panels[0].ID=OwnerID) and (Page.Balloons[0].PanelID=OwnerID) and (Page.Balloons[0].Text='頂点編集'),
+        'vertex drag preserves panel identity and balloon ownership');
+      Undo(nil); Check((Page.Panels[0].Shape=0) and (Page.Panels[0].Bounds=TRectF.Create(100,100,1100,1600)),
+        'vertex drag undo restores original rectangle');
+      Redo(nil); Check((Page.Panels[0].Shape=3) and (Length(Page.Panels[0].Vertices)=4),'vertex drag redo restores edited polygon');
+      RoundTrip('vertex edited polygon saves and reloads');
+      FPanelIndex:=0; Capture('geometry-vertex-after'); Before:=FProject.Snapshot; UndoCount:=FUndo.Count;
+      Panel:=Page.Panels[0]; Q:=VertexHandles(Panel)[1];
+      PX:=FPageRect.Left+Round(Q.X*FScale); PY:=FPageRect.Top+Round(Q.Y*FScale);
+      MouseDown(FCanvas,mbLeft,[],PX,PY);
+      Check(FDragVertex=1,'polygon vertex handle starts a vertex edit');
+      MouseMove(FCanvas,[ssLeft],PX,PY+Round((Panel.Vertices[2].Y-Panel.Vertices[1].Y)*FScale));
+      MouseUp(FCanvas,mbLeft,[],PX,PY);
+      Check((FProject.Snapshot=Before) and (FUndo.Count=UndoCount),'duplicate-vertex drag is rejected without mutation or history');
+      Q:=VertexHandles(Page.Panels[0])[1]; PX:=FPageRect.Left+Round(Q.X*FScale); PY:=FPageRect.Top+Round(Q.Y*FScale);
+      MouseDown(FCanvas,mbLeft,[],PX,PY); MouseMove(FCanvas,[ssLeft],PX-20,PY+20);
+      KeyValue:=VK_ESCAPE; ActiveControl:=FView; Key(Self,KeyValue,[]);
+      Check((FProject.Snapshot=Before) and (FUndo.Count=UndoCount) and not FDragging,'Esc cancels vertex drag and restores valid outline');
+      FPanelIndex:=0; Capture('geometry-vertex-restored'); Panel:=Page.Panels[0]; Q:=VertexHandles(Panel)[0];
+      PX:=FPageRect.Left+Round(Q.X*FScale); PY:=FPageRect.Top+Round(Q.Y*FScale);
+      FCanvas.Perform(WM_RBUTTONDOWN,MK_RBUTTON,MakeLParam(PX,PY)); FCanvas.Perform(WM_RBUTTONUP,0,MakeLParam(PX,PY));
+      Check((Length(Page.Panels[0].Vertices)=3) and ValidPolygon(Page.Panels[0].Vertices),'right click deletes a vertex from selected polygon');
+      SameImage('vertex deletion preserves image placement'); Undo(nil);
+      Check(Length(Page.Panels[0].Vertices)=4,'vertex deletion undo restores exact vertex count'); Redo(nil);
+      FPanelIndex:=0; Capture('geometry-triangle'); Before:=FProject.Snapshot; UndoCount:=FUndo.Count;
+      Q:=VertexHandles(Page.Panels[0])[0]; PX:=FPageRect.Left+Round(Q.X*FScale); PY:=FPageRect.Top+Round(Q.Y*FScale);
+      MouseDown(FCanvas,mbRight,[],PX,PY);
+      Check((FProject.Snapshot=Before) and (FUndo.Count=UndoCount),'triangle refuses vertex deletion and keeps history');
+      Panel:=Page.Panels[0]; Q:=TPointF.Create((Panel.Vertices[0].X+Panel.Vertices[1].X)/2,
+        (Panel.Vertices[0].Y+Panel.Vertices[1].Y)/2);
+      PX:=FPageRect.Left+Round(Q.X*FScale); PY:=FPageRect.Top+Round(Q.Y*FScale);
+      FCanvas.Perform(WM_RBUTTONDOWN,MK_RBUTTON,MakeLParam(PX,PY)); FCanvas.Perform(WM_RBUTTONUP,0,MakeLParam(PX,PY));
+      Check((Length(Page.Panels[0].Vertices)=4) and ValidPolygon(Page.Panels[0].Vertices),'right click on edge adds a valid projected vertex');
+      SameImage('vertex insertion preserves image placement'); RoundTrip('inserted collinear vertex saves and reloads');
+      Panel:=Page.Panels[0]; Q:=VertexHandles(Panel)[1]; PX:=FPageRect.Left+Round(Q.X*FScale); PY:=FPageRect.Top+Round(Q.Y*FScale);
+      MouseDown(FCanvas,mbLeft,[],PX,PY); Check(FDragVertex=1,'added collinear vertex has an accessible inside handle');
+      MouseMove(FCanvas,[ssLeft],PX-20,PY); MouseUp(FCanvas,mbLeft,[],PX-20,PY);
+      Check(ValidPolygon(Page.Panels[0].Vertices) and not Page.Panels[0].CanSplit,'inward vertex edit creates a valid concave polygon');
+      Capture('geometry-vertex-concave'); RoundTrip('concave vertex edited polygon saves and reloads');
+      Undo(nil); Undo(nil); Check(Length(Page.Panels[0].Vertices)=3,'vertex insertion and drag each undo as one operation');
+      Redo(nil); Redo(nil); Check(Length(Page.Panels[0].Vertices)=4,'vertex insertion and drag redo without losing topology');
+      Panel:=Page.Panels[0];
+      Points:=[TPointF.Create(100,100),TPointF.Create(70000,100),TPointF.Create(1100,1600),TPointF.Create(100,1600)];
+      Panel.SetVertices(Points); PreservePanelImage(Panel,ImageRect);
+      Check(Panel.Zoom<0.1,'large vertex expansion supports relative image scale below ten percent');
+      SameImage('large vertex expansion preserves original global image rectangle');
+      B.SetSize(600,850); FRenderer.Draw(B.Canvas,FProject,Page,Rect(0,0,600,850),False);
+      RoundTrip('large vertex expansion saves and reloads its image scale');
+      VertexDPI(96); VertexDPI(144);
+    finally
+      Reference.Free; PNG.Free; ResetGeometryInput; FDragging:=False; FFirst:=False;
+      FProject.Free; FUndo.Free; FRedo.Free; FProject:=OriginalProject; FUndo:=OriginalUndo; FRedo:=OriginalRedo;
+      FPageIndex:=OldIndex; FPanelIndex:=-1; FBalloonIndex:=-1; FTool:=0; FSnap.Checked:=OldSnap; RefreshUI;
+      Check(FProject.Snapshot=Model,'isolated geometry tests preserve the main fixture project');
+    end;
   end;
   procedure IconChecks;
   var OriginalPPI,OriginalW,OriginalH: Integer; OriginalScaled: Boolean; Model: string; Button,Probe: TComicIconButton;
@@ -1095,7 +1876,9 @@ var B: TBitmap; A,A2: TComicAsset; P: TComicPanel; Balloon: TComicBalloon;
       Scaled:=False; Width:=MulDiv(W,PPI,96); Height:=MulDiv(H,PPI,96); Realign;
       Check((PixelsPerInch=PPI) and (CurrentPPI=PPI),Name+' applies requested VCL PPI '+IntToStr(PPI));
       for Mode:=0 to 3 do begin
-        FModeButtons[Mode].Click; SaveUI(Name+'-mode'+IntToStr(Mode)); AllFit:=True; NoOverlap:=True;
+        FModeButtons[Mode].Click;
+        if Mode in [1,3] then TScrollBox(FTabs.ActivePage.Controls[0]).VertScrollBar.Position:=0;
+        SaveUI(Name+'-mode'+IntToStr(Mode)); AllFit:=True; NoOverlap:=True;
         for First in FIconButtons do begin
           if (First.Left<0) or (First.Left+First.Width>First.Parent.ClientWidth) then AllFit:=False;
           for Second in FIconButtons do if (First<>Second) and (First.Parent=Second.Parent) then begin
@@ -1106,6 +1889,15 @@ var B: TBitmap; A,A2: TComicAsset; P: TComicPanel; Balloon: TComicBalloon;
         Check(AllFit and NoOverlap,Name+' mode '+IntToStr(Mode)+' icon bounds fit without overlap');
         Check((FModeTitle.Caption=FTabs.ActivePage.Caption) and FModeButtons[Mode].Selected,
           Name+' mode '+IntToStr(Mode)+' keeps selected icon and readable mode title');
+        if Mode=1 then begin
+          Scroll:=TScrollBox(FTabs.ActivePage.Controls[0]); Second:=nil;
+          for First in FIconButtons do if (First.Role=brRegister) and (First.Parent=Scroll) then Second:=First;
+          Check(Second<>nil,Name+' panel register command exists');
+          Scroll.ScrollInView(Second); ActiveControl:=Second;
+          Check((Second.Top>=0) and (Second.Top+Second.Height<=Scroll.ClientHeight),
+            Name+' panel bottom action remains reachable by scrolling and focus');
+          SaveUI(Name+'-mode1-scrolled');
+        end;
         if Mode=3 then begin
           PX:=FPageRect.Left+Round(Page.Balloons[0].Bounds.CenterPoint.X*FScale);
           PY:=FPageRect.Top+Round(Page.Balloons[0].Bounds.CenterPoint.Y*FScale);
@@ -1253,6 +2045,7 @@ begin
     Check(Page.Panels[0].Bounds.Right=900,'panel redo');
     RenderChecks;
     EditingChecks;
+    TextSessionChecks;
     IconChecks;
     Layout:=TComicLayout.Create; Layout.Name:='楕円のテスト・共通';
     Page.Panels[0].Shape:=1; Layout.Capture(FProject,Page); FLayouts.Add(Layout);
@@ -1393,6 +2186,7 @@ begin
     Check((FProject.Pages.Count=0) and (Page=nil),'all-pages deletion leaves a valid empty project');
     Undo(nil); Check(FProject.Pages.Count=3,'all-pages deletion undo');
     FProject.Width:=1200; FProject.Height:=1700; FPageIndex:=0; RefreshUI;
+    GeometryChecks;
     FTabs.ActivePageIndex:=0; TabChanged(nil); Capture('window-final');
     Dialog:=TAssetDialog.CreateManager(Self,FCharacters,nil,True);
     try

@@ -17,7 +17,7 @@ begin
   try
     Pair:=J.RemovePair('revision'); Pair.Free;
     Pair:=J.RemovePair('outputRevision'); Pair.Free;
-    Text:='renderer-4|'+IntToStr(Project.Width)+'x'+IntToStr(Project.Height)+'|'+J.ToJSON;
+    Text:='renderer-5|'+IntToStr(Project.Width)+'x'+IntToStr(Project.Height)+'|'+J.ToJSON;
     for P in Page.Panels do if P.ImageID<>'' then begin
       Path:=Project.ImagePath(P.ImageID);
       if not Images.TryGetValue(Path,Hash) then begin

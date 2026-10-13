@@ -6,7 +6,7 @@ uses System.Classes, System.Types, System.Math, Winapi.Windows, Winapi.Messages,
   Vcl.Controls, Vcl.Forms, Vcl.Graphics;
 
 type
-  TComicIcon = (ciSelect,ciRectangle,ciEllipse,ciRounded,ciOrder,ciBalloonEllipse,
+  TComicIcon = (ciSelect,ciRectangle,ciEllipse,ciRounded,ciPolygon,ciSplit,ciOrder,ciBalloonEllipse,
     ciBalloonRounded,ciTail,ciLayout,ciPanelEdit,ciImage,ciCharacters,ciNew,ciOpen,
     ciSave,ciUndo,ciRedo,ciExport,ciAddPage,ciDelete,ciUp,ciDown,ciRegister,
     ciApplyLayout,ciInsertLayout,ciAssignImage,ciDetachImage,ciApplyText);
@@ -98,6 +98,13 @@ begin
     ciRectangle: Box(-10,-8,10,8);
     ciEllipse: C.Ellipse(X(-12),Y(-9),X(12),Y(9));
     ciRounded: C.RoundRect(X(-11),Y(-9),X(11),Y(9),Round(8*S),Round(8*S));
+    ciPolygon: begin
+      C.Polygon([Point(X(-11),Y(8)),Point(X(-5),Y(-10)),Point(X(11),Y(-4)),Point(X(7),Y(10))]);
+      C.Brush.Style:=bsSolid; C.Brush.Color:=Color;
+      C.Rectangle(X(-13),Y(6),X(-9),Y(10)); C.Rectangle(X(-7),Y(-12),X(-3),Y(-8));
+      C.Rectangle(X(9),Y(-6),X(13),Y(-2)); C.Rectangle(X(5),Y(8),X(9),Y(12));
+    end;
+    ciSplit: begin Box(-11,-10,11,10); Line(-10,-6,9,8); Line(-9,-10,10,4); end;
     ciOrder: begin
       Box(-11,-10,-1,0); Box(1,2,11,12); Line(-5,2,-5,9); Line(-5,9,0,9);
       C.Font.Name:='Segoe UI'; C.Font.Height:=-Max(8,Round(8*S));

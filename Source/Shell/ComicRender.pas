@@ -71,7 +71,7 @@ begin
   Result:=TRectF.Empty;
   try B:=Image(Project.ImagePath(Panel.ImageID)); except Exit; end;
   if B=nil then Exit;
-  Cover:=Max(Panel.Bounds.Width/B.Width,Panel.Bounds.Height/B.Height)*Max(0.1,Panel.Zoom);
+  Cover:=Max(Panel.Bounds.Width/B.Width,Panel.Bounds.Height/B.Height)*Max(0.000001,Panel.Zoom);
   W:=B.Width*Cover; H:=B.Height*Cover;
   Result:=TRectF.Create((Panel.Bounds.Left+Panel.Bounds.Right-W)/2+Panel.PanX,
     (Panel.Bounds.Top+Panel.Bounds.Bottom-H)/2+Panel.PanY,0,0);
@@ -106,7 +106,7 @@ procedure TComicRenderer.Draw(C: TCanvas; Project: TComicProject; Page: TComicPa
   const Target: TRect; Guides: Boolean);
 var S: Double; P: TComicPanel; B: TComicBalloon; R,D,TextR: TRect;
   G,TailG: HRGN; Saved, PageDC,X,Y,Step: Integer; Img: TBitmap;
-  Cover,W,H: Double; Points: array[0..2] of TPoint;
+  Points: array[0..2] of TPoint;
   function Map(const A: TRectF): TRect;
   begin Result:=Rect(Target.Left+Round(A.Left*S),Target.Top+Round(A.Top*S),
     Target.Left+Round(A.Right*S),Target.Top+Round(A.Bottom*S)); end;
@@ -159,10 +159,7 @@ begin
         ClipPanel(C,P,Target.TopLeft,S); C.Brush.Color:=$F5F2EF; C.FillRect(R);
         Img:=Image(Project.ImagePath(P.ImageID));
         if Img<>nil then begin
-          Cover:=Max(P.Bounds.Width/Img.Width,P.Bounds.Height/Img.Height)*Max(0.1,P.Zoom);
-          W:=Img.Width*Cover*S; H:=Img.Height*Cover*S;
-          D:=Rect(R.Left+Round((R.Width-W)/2+P.PanX*S),R.Top+Round((R.Height-H)/2+P.PanY*S),0,0);
-          D.Right:=D.Left+Round(W); D.Bottom:=D.Top+Round(H);
+          D:=Map(ImageBounds(Project,P));
           SetStretchBltMode(C.Handle,HALFTONE); C.StretchDraw(D,Img);
         end;
       finally RestoreDC(C.Handle,Saved); C.Refresh; end;

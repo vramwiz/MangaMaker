@@ -97,11 +97,12 @@ begin
     W:=JNum(TJSONObject(V),'w',NaN); H:=JNum(TJSONObject(V),'h',NaN);
     if IsNan(X) or IsNan(Y) or IsNan(W) or IsNan(H) or
       IsInfinite(X) or IsInfinite(Y) or IsInfinite(W) or IsInfinite(H) or
-      (W<1) or (H<1) or (Abs(X)>80000) or (Abs(Y)>80000) or (W>80000) or (H>80000) then
+      (W<=0) or (H<=0) or (Abs(X)>80000) or (Abs(Y)>80000) or (W>80000) or (H>80000) then
       raise Exception.Create('Invalid layout geometry.');
     Item.Bounds:=TRectF.Create(X,Y,X+W,Y+H);
     Item.Shape:=Round(JNum(TJSONObject(V),'shape',0)); Item.Number:=Round(JNum(TJSONObject(V),'number',1));
     if not (Item.Shape in [0,1,2,3]) then raise Exception.Create('Unsupported layout shape.');
+    if (Item.Shape<>3) and ((W<1) or (H<1)) then raise Exception.Create('Invalid layout geometry.');
     Item.Vertices:=nil;
     if Item.Shape=3 then begin Item.Vertices:=ReadPoints(TJSONObject(V)); Item.Bounds:=PolygonBounds(Item.Vertices); end;
     Panels.Add(Item);

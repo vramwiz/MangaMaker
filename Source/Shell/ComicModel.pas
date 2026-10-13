@@ -180,14 +180,17 @@ begin
   Vertices:=Copy(Points,0,Length(Points)); Shape:=3; Bounds:=PolygonBounds(Vertices);
 end;
 procedure TComicPanel.SetBounds(const Value: TRectF);
-var I: Integer;
+var I: Integer; Candidate: TArray<TPointF>;
 begin
   if Shape=3 then begin
     if (Bounds.Width<=0) or (Bounds.Height<=0) or (Value.Width<=0) or (Value.Height<=0) then
       raise Exception.Create('Invalid polygon bounds.');
-    for I:=0 to High(Vertices) do Vertices[I]:=TPointF.Create(
+    SetLength(Candidate,Length(Vertices));
+    for I:=0 to High(Vertices) do Candidate[I]:=TPointF.Create(
       Value.Left+(Vertices[I].X-Bounds.Left)*Value.Width/Bounds.Width,
       Value.Top+(Vertices[I].Y-Bounds.Top)*Value.Height/Bounds.Height);
+    if not ValidPolygon(Candidate) then raise Exception.Create('Invalid resized polygon geometry.');
+    Vertices:=Candidate;
   end;
   Bounds:=Value;
 end;

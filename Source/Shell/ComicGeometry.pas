@@ -60,6 +60,8 @@ begin
   if PolygonArea(Points)<1 then Exit;
   for I:=0 to N-1 do begin
     if Distance(Points[I],Points[(I+1) mod N])<Epsilon then Exit;
+    if OnSegment(Points[I],Points[(I+1) mod N],Points[(I+2) mod N]) or
+      OnSegment(Points[(I+1) mod N],Points[(I+2) mod N],Points[I]) then Exit;
     for J:=I+1 to N-1 do begin
       if (J=I+1) or ((I=0) and (J=N-1)) then Continue;
       if SegmentsTouch(Points[I],Points[(I+1) mod N],Points[J],Points[(J+1) mod N]) then Exit;
