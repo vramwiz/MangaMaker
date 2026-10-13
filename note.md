@@ -87,6 +87,8 @@
 - 実装commit [`0e8e602ea9d07ab2ad1107387c171851fde68b98`](https://github.com/vramwiz/MangaMaker/commit/0e8e602ea9d07ab2ad1107387c171851fde68b98) を既存の `origin/main` へ通常push。14:51 UTCに `git ls-remote` とfetchで、remote/main・HEAD・origin/mainの一致と作業ツリーがクリーンであることを確認。force pushなし、Git認証のブロックなし。
 - GitHubの当該commitを確認した結果、Actions実行0件、statusチェック0件、Check Runs 0件。このcheckoutにもActions定義はなく、利用可能なCI結果はない。CI成功として扱わず、上記のローカルDebug/Release/CLI検証を根拠とする。証跡はsession内 `Git-publication.json` / `GitHub-check-runs.json` とCI集約記録。
 - 後続はこの公開記録だけの文書更新。実装・ビルド入力・検証済みexeは変更しない。同期対象はソース/文書だけで、生成物と大きな素材はリポジトリへ送っていない。
+- 最後の保存経路確認では、パイプ登録のPersistがDraft単独のAtomicWriteであることを確認。ページ別保存失敗と混同した一時的なテストは誤った期待値で失敗したため取り除いた（ログ `Draft-publication-reproduction.log`）。製品修正はなく、全ビルド入力のハッシュは確定済み1262候補と一致。上書きされたDebug exeは再ビルド・1262 PASSへ揃えた。最終Debug fixtureは `TestOutput/5fdcd5419111458a9797d892464ce590/`、Releaseは `TestOutput/1614473244ca489d8e0bf336deb3b82e/`。以後は完了確認だけを行う。
+- 15:06 UTC時点のD空きは約227MiB。最終exeは `TestOutput/Verified/MangaMaker.exe`（Debug）と `TestOutput/Verified-Release/MangaMaker.exe`（Release）。資料の候補ハッシュと最終検証ハッシュを再同期して、この文書更新も通常pushする。
 
 更新: 2026-10-13 06:42 UTC。以下は以前の文字入力区切りの歴史的記録。
 
