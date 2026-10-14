@@ -26,6 +26,14 @@ type
     FReferences: TButton;
     FAlternate,FTitle: TMenuItem;
     FLoading: Boolean;
+    FGenerate,FCancelGeneration: TButton;
+    FGenerationStatus: TLabel;
+    FGenerationBusy: Boolean;
+    FGenerationSessionID: string;
+    FGenerateHandler,FCancelHandler: TNotifyEvent;
+    procedure GenerateClick(Sender: TObject);
+    procedure CancelGenerateClick(Sender: TObject);
+    procedure UpdateGenerateButton;
     procedure BuildTree;
     procedure Change(Sender: TObject; Node: TTreeNode);
     procedure Store;
@@ -44,7 +52,14 @@ type
   public
     constructor CreateManager(AOwner: TComponent; List: TObjectList<TComicAsset>;
       Project: TComicProject; Characters: Boolean; Writable: Boolean=True; PresetHandler: TNotifyEvent=nil;
-      CharacterList: TObjectList<TComicAsset>=nil);
+      CharacterList: TObjectList<TComicAsset>=nil; GenerateHandler: TNotifyEvent=nil; CancelHandler: TNotifyEvent=nil);
+    destructor Destroy; override;
+    procedure SetGenerationBusy(Busy: Boolean; const Status: string);
+    procedure RefreshFromGenerated(const AssetID: string; Preview: TGraphic); virtual;
+    property GenerateButton: TButton read FGenerate;
+    property GenerationStatus: TLabel read FGenerationStatus;
+    property GenerationBusy: Boolean read FGenerationBusy;
+    property GenerationSessionID: string read FGenerationSessionID;
     procedure FlushDraft;
     procedure RefreshFromExternal;
     procedure SelectAsset(const ID: string);
@@ -71,12 +86,13 @@ procedure TAssetDialog.SelectAsset(const ID: string);
 var Node: TTreeNode;
 begin for Node in FTree.Items do if (Node.Data<>nil) and (TComicAsset(Node.Data).ID=ID) then begin FTree.Selected:=Node; Exit; end; end;
 constructor TAssetDialog.CreateManager(AOwner: TComponent; List: TObjectList<TComicAsset>;
-  Project: TComicProject; Characters: Boolean; Writable: Boolean; PresetHandler: TNotifyEvent; CharacterList: TObjectList<TComicAsset>);
+  Project: TComicProject; Characters: Boolean; Writable: Boolean; PresetHandler: TNotifyEvent; CharacterList: TObjectList<TComicAsset>; GenerateHandler,CancelHandler: TNotifyEvent);
 var Left,Right,Bar,Details: TPanel; B: TButton; L: TLabel;
   procedure Button(const Caption: string; X,W,Tag: Integer; Handler: TNotifyEvent);
   begin B:=TButton.Create(Self); B.Parent:=Bar; B.SetBounds(X,10,W,32); B.Caption:=Caption; B.Tag:=Tag; B.OnClick:=Handler; B.Enabled:=Writable or (Caption='保存して閉じる'); end;
 begin
   inherited CreateNew(AOwner); FList:=List; FProject:=Project; FCharacters:=Characters; FWritable:=Writable; FCharacterList:=CharacterList;
+  FGenerateHandler:=GenerateHandler; FCancelHandler:=CancelHandler; FGenerationSessionID:=NewUID;
   if Characters then NormalizeCharacters(List);
   Position:=poOwnerFormCenter; Width:=940; Height:=680; Constraints.MinWidth:=760; Constraints.MinHeight:=580;
   Font.Name:='Yu Gothic UI'; Font.Size:=10;
@@ -86,6 +102,16 @@ begin
   else begin Button('新規場面',12,130,0,AddItem); Button('派生画像を追加',150,160,1,AddItem); end;
   Button('画像を登録',324,130,0,ChooseImage); Button('保存して閉じる',654,220,0,SaveClick);
   if not Characters and Assigned(PresetHandler) then Button('生成プリセット',466,170,0,PresetHandler);
+  if Assigned(GenerateHandler) then begin
+    Bar.Height:=102;
+    FGenerate:=TButton.Create(Self); FGenerate.Parent:=Bar; FGenerate.SetBounds(12,56,200,34);
+    FGenerate.Caption:='Codexで画像生成'; FGenerate.OnClick:=GenerateClick;
+    FCancelGeneration:=TButton.Create(Self); FCancelGeneration.Parent:=Bar; FCancelGeneration.SetBounds(220,56,100,34);
+    FCancelGeneration.Caption:='生成を中止'; FCancelGeneration.OnClick:=CancelGenerateClick; FCancelGeneration.Enabled:=False;
+    FGenerationStatus:=TLabel.Create(Self); FGenerationStatus.Parent:=Bar; FGenerationStatus.SetBounds(330,56,580,38);
+    FGenerationStatus.AutoSize:=False; FGenerationStatus.WordWrap:=True; FGenerationStatus.Anchors:=[akLeft,akTop,akRight];
+    FGenerationStatus.Caption:='対象の名前・説明を入力して、生成ボタンを押してください。';
+  end;
   Left:=TPanel.Create(Self); Left.Parent:=Self; Left.Align:=alLeft; Left.Width:=250; Left.BevelOuter:=bvNone;
   FTree:=TTreeView.Create(Self); FTree.Parent:=Left; FTree.Align:=alClient; FTree.ReadOnly:=True; FTree.HideSelection:=False; FTree.OnChange:=Change;
   if Characters then begin
@@ -129,6 +155,28 @@ begin
   FImage:=TImage.Create(Self); FImage.Parent:=Right; FImage.Align:=alClient; FImage.Proportional:=True; FImage.Center:=True;
   FBaseHint:=FHint.Caption; OnCloseQuery:=CloseCheck; BuildTree;
   if not Characters then SetGenerationSummary(Project.GenerationPresetName,Project.GenerationInstructions);
+end;
+destructor TAssetDialog.Destroy;
+begin if Assigned(FCancelHandler) then FCancelHandler(Self); inherited; end;
+procedure TAssetDialog.UpdateGenerateButton;
+begin if FGenerate<>nil then FGenerate.Enabled:=FWritable and (FCurrent<>nil) and not FGenerationBusy; end;
+procedure TAssetDialog.SetGenerationBusy(Busy: Boolean; const Status: string);
+begin
+  FGenerationBusy:=Busy; UpdateGenerateButton;
+  if FCancelGeneration<>nil then FCancelGeneration.Enabled:=Busy;
+  if FGenerationStatus<>nil then FGenerationStatus.Caption:=Status;
+end;
+procedure TAssetDialog.GenerateClick(Sender: TObject);
+begin if FWritable and not FGenerationBusy and (FCurrent<>nil) and Assigned(FGenerateHandler) then begin Store; FGenerateHandler(Self); end; end;
+procedure TAssetDialog.CancelGenerateClick(Sender: TObject);
+begin if Assigned(FCancelHandler) then FCancelHandler(Self); end;
+procedure TAssetDialog.RefreshFromGenerated(const AssetID: string; Preview: TGraphic);
+var N: TTreeNode; A: TComicAsset;
+begin
+  for N in FTree.Items do if N.Data<>nil then begin A:=TComicAsset(N.Data); N.Text:=A.Name; if A.FileName='' then N.Text:=N.Text+'  [No Image]'; end;
+  if (FCurrent<>nil) and (FCurrent.ID=AssetID) and (Preview<>nil) then begin
+    FImage.Picture.Assign(Preview); FPreviewError:=''; FHint.Caption:=FBaseHint;
+  end;
 end;
 procedure TAssetDialog.SetGenerationSummary(const Name,Instructions: string);
 begin
@@ -187,6 +235,7 @@ begin
   FName.Text:=''; FNotes.Clear;
   if FCharacters then begin FCharacterName.Clear; FCharacterNotes.Clear; FCharacterName.Enabled:=FWritable and (FCurrent<>nil); FCharacterNotes.Enabled:=FCharacterName.Enabled; end;
   if FReferences<>nil then begin FReferences.Enabled:=FWritable and (FCurrent<>nil) and (FCurrent.ParentID<>'') and (FCharacterList<>nil); FReferences.Caption:='参照する人物・服装: 0件'; end;
+  UpdateGenerateButton;
   if FCurrent=nil then Exit;
   FName.Text:=FCurrent.Name; FNotes.Text:=FCurrent.Notes;
   if FCharacters then begin FName.Text:=FCurrent.StateName; FCharacterName.Text:=FCurrent.CharacterName; FCharacterNotes.Text:=FCurrent.CharacterNotes; end;
@@ -319,6 +368,7 @@ begin
 end;
 procedure TAssetDialog.CloseCheck(Sender: TObject; var CanClose: Boolean);
 begin
+  if Assigned(FCancelHandler) then FCancelHandler(Self);
   if not FWritable then Exit;
   Store;
   if FCharacters then WriteAssets(FList,TPath.Combine(DataRoot,'Characters\Library.json'));

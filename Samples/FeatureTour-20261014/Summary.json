@@ -1,5 +1,5 @@
 {
-  "Utc": "2026-10-14T01:46:32.1161047Z",
+  "Utc": "2026-10-14T04:31:04.4761478Z",
   "Project": "D:\\DelphiProg\\MyApp\\MangaMaker\\Samples\\FeatureTour-20261014\\Project\\Project.json",
   "Pages": 6,
   "Panels": 24,
@@ -8,9 +8,14 @@
   "Overlays": 5,
   "JsonAbsoluteReferences": 0,
   "PNGCount": 6,
-  "AppSHA256": "31AC3ED851286BD40C7BD941419F1B094DEA971D2A7A767E1D38FDA86E07C516",
+  "AppSHA256": "26B4ECE49E9017ABA59A1966E952050F066A0919BA35281156CA84816F58971A",
   "Bytes": 9718666.0,
   "OpenWorkflowPass": 42,
   "ViewportNativePass": 111,
-  "FullRegressionPass": 1728
+  "FullRegressionPass": 1752,
+  "GenerationFlowPass": 73,
+  "RealGenerationPass": 9,
+  "ReleasePerformanceLogExcluded": true,
+  "MenuWorkflowPass": 156,
+  "TopToolbarRemoved": true
 }

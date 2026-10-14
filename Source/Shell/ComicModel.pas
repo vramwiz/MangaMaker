@@ -154,6 +154,7 @@ function PointsJson(const Points: TArray<TPointF>): TJSONArray;
 function ReadPoints(J: TJSONObject): TArray<TPointF>;
 
 implementation
+{$IFDEF DEBUG}uses ComicPerformance;{$ENDIF}
 
 function TComicPageBasis.Valid: Boolean;
 begin
@@ -567,11 +568,15 @@ begin
   A:=TJSONArray.Create; Result.AddPair('pages',A); for P in Pages do A.AddElement(P.Json);
 end;
 function TComicProject.Snapshot: string;
+{$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
 var J: TJSONObject;
-begin J:=Json; try Result:=J.ToJSON; finally J.Free; end; end;
+begin
+  {$IFDEF DEBUG}PerfScope.Start(cpSnapshot);{$ENDIF} J:=Json; try Result:=J.ToJSON; finally J.Free; end; end;
 procedure TComicProject.Restore(const S: string);
+{$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
 var J: TJSONObject; V: TJSONValue; A: TJSONArray; P: TComicPage; I: TComicAsset; Panel: TComicPanel; Overlay: TComicOverlay; PageIDs: TDictionary<string,Boolean>;
 begin
+  {$IFDEF DEBUG}PerfScope.Start(cpRestore);{$ENDIF}
   V:=TJSONObject.ParseJSONValue(S);
   if not (V is TJSONObject) then begin V.Free; raise Exception.Create('JSONを読み込めません。'); end;
   J:=TJSONObject(V);
@@ -608,8 +613,10 @@ end;
 procedure TComicProject.Save;
 begin AtomicWrite(TPath.Combine(Folder,'Project.json'),Snapshot); SaveDraft; end;
 procedure TComicProject.SaveDraft;
+{$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
 var P: TComicPage; J: TJSONObject;
 begin
+  {$IFDEF DEBUG}PerfScope.Start(cpSaveDraft);{$ENDIF}
   if Folder='' then Exit;
   AtomicWrite(TPath.Combine(Folder,'Draft.json'),Snapshot);
   for P in Pages do begin J:=P.Json; try AtomicWrite(SafeChild(Folder,'Pages\'+P.ID+'.json'),J.ToJSON); finally J.Free; end; end;

@@ -36,7 +36,8 @@ procedure DrawComicTextCell(Canvas: TCanvas; const Text: string;
 
 implementation
 
-uses Winapi.Windows, System.Math, System.SysUtils, ComicTextUnits;
+uses Winapi.Windows, System.Math, System.SysUtils, ComicTextUnits
+  {$IFDEF DEBUG}, ComicPerformance{$ENDIF};
 
 function Opening(const Text: string): Boolean;
 begin Result:=(Length(Text)=1) and (Pos(Text,'（［｛〔〈《「『【(')>0); end;
@@ -50,8 +51,10 @@ end;
 
 procedure DrawComicTextCell(Canvas: TCanvas; const Text: string;
   const Cell: TComicTextCell; const Bounds: TRect; Vertical: Boolean);
+{$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
 var X,Y,W,H,Saved: Integer; Transform: TXForm; Value: string;
 begin
+  {$IFDEF DEBUG}PerfScope.Start(cpTextDraw);{$ENDIF}
   Value:=Copy(Text,Cell.Index+1,Cell.Count); if Value='' then Exit;
   W:=Canvas.TextWidth(Value); H:=Canvas.TextHeight(Value);
   SetBkMode(Canvas.Handle,TRANSPARENT);
@@ -102,6 +105,7 @@ begin
 end;
 
 procedure TComicTextLayout.Build(Canvas: TCanvas; const Text: string; const Area: TRect; Vertical: Boolean);
+{$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
 var At,Count,X,Y,W,Line,NextCount,NextW: Integer; Cell: TComicTextCell; Stop: TComicCaretStop; Value,Next: string;
   procedure AddStop(Index: Integer);
   begin Stop.Index:=Index; Stop.Line:=Line; Stop.Point:=Point(X,Y); Stops.Add(Stop); end;
@@ -111,6 +115,7 @@ var At,Count,X,Y,W,Line,NextCount,NextW: Integer; Cell: TComicTextCell; Stop: TC
     if Vertical then begin Dec(X,Step); Y:=Area.Top; end else begin X:=Area.Left; Inc(Y,Step); end;
   end;
 begin
+  {$IFDEF DEBUG}PerfScope.Start(cpTextLayout);{$ENDIF}
   Stops.Clear; Cells.Clear; Step:=Max(8,Canvas.TextHeight('漢')+4); Line:=0;
   X:=Area.Left; if Vertical then X:=Area.Right-Step;
   Y:=Area.Top; AddStop(0); At:=0;

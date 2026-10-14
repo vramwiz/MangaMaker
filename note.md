@@ -1,5 +1,30 @@
 ﻿# MangaMaker 作業記録
 
+## 上部ツールバーをメニューへ統合（2026-10-14）
+
+- 開始時main/0895492096ea89a7254bb701b5f2f34ec8de87d3。前回の画像生成/Debug計測とユーザー試用の未コミット変更を保持。今回変更した既存ソースはMainFormだけで、キャッシュ高速化や描画ライブラリ移行は行っていない。
+- 上部8操作を棚卸し：新規/開く/保存/PNGはファイル、Undo/Redoは編集、キャラクター/画像は設定・管理に既存入口があったため、重複する64px相当のバーを廃止。保存/出力/画像/履歴のEnabledをメニューへ同期し、表示メニューには5画面の排他的チェックと次/前/全体表示を追加。右側ツール・選択色・画面名・ステータスを保持。
+- 既存Ctrl+N/O/S/Z/Y、Ctrl+1～5、Ctrl+Tab/Shift+Tab、Ctrl+0とテンキー0を維持。PNG Ctrl+E、キャラCtrl+Shift+C、画像Ctrl+Shift+Iを追加してメニューへ表示。選択キーはAltや余分な修飾との組合せで誤発火しないようにし、キャンバスCtrl+A/Delete/Escとホイール/パンも維持。
+- VCLのIsShortCutはOnKeyDownより先にメニューを呼ぶため、両入口でガード。通常/汎用テキスト欄・編集可能コンボ・未確定IME、Application.ModalLevel、別のActiveForm、VCL Enabledと実HWND無効状態を確認する。入力欄にはFalse/未消費で返し、その欄のUndo・文字削除・確定取消を保持。明示的なメニュークリックは通常操作として許可する。
+- 最終Debug/Releaseとも1752 PASS、CLI4 PASS、追加メニュー検証156 PASS、実メニュー経由のファイル選択/保存/6枚PNG/履歴42 PASS、既存表示操作111 PASS、画像連携73 PASS。Debug11874行/Release11662行、エラー/警告/ヒントなし。Releaseは計測識別文字列/DCU/実行時性能ログなしを再確認する。96/144 PPIの実VCL画面でバーの跡がなく、右ツールと選択表示を確認。
+- 最初の追加テストは非表示タブの文字欄へフォーカスしようとして失敗し、表示する吹き出しタブを選ぶよう修正。次のローカルUndo検証には通常のWin32キー変換と同じWM_CHAR(26)も送る必要があり、キー列を修正して成功した。製品ガードや期待値を弱めていない。初期の追加DPIテストは実際に96のままだったため、Scaledを有効にしてから倍率を適用し、CurrentPPI/PixelsPerInchが96/144と一致することを明示的に検証。新3ショートカットは実Win32キャプチャ中に実管理/出力ダイアログを開き、未確定編集の取消とSnapshot/Undo/Redo/キャプチャの保持も確認した。
+- 初回全体回帰は、バー撤去でfit倍率が変わり、重複頂点へ動かすテストの整数画面座標に丸め誤差が出て失敗。独立した幾何fixtureを正確な1/4倍率に固定し、実際に完全重複を入力する条件へ修正。製品の形状判定とSnapshot/Undo不変の期待値は維持した。失敗記録もChecks-Debug/とBefore-quarter-scale-test.pasへ保持。
+- ユーザー編集のサンプルProject/Data/SourceImages52ファイルをBefore-sample-hashes.csvで保護。既存ZIPの作品を保ち、EXE/README/Summaryだけ更新する。通常EXE/同梱/ZIPは同じ最終Releaseへ同期、直前のEXE/ZIP/文書はBefore-artifactsへ退避。ユーザー稼働アプリの強制終了、音、commit/push、追加清掃は行わない。
+- 証跡：TestOutput/MenuUI-20261014-0400/ のChecks-Final-Debug/、Checks-Final-Release/、Menus-run-4/（156件と96/144PPI画像）、OpenUI-run-1/、Native-run-1/、Fake-run-1/、CLI-final-build/、Final-verification.json、Reproduction/。実IME候補/物理DPI・物理キー/長時間制作の未検証範囲は継続。
+
+## 画像生成連携の仕上げ・Debug性能計測（2026-10-14）
+
+- 開始基準はmain / 0895492096ea89a7254bb701b5f2f34ec8de87d3。キャラ/画像管理の「Codexで画像生成」→専用app-server→正式imageGeneration/turn完了→画像検証/管理先コピー→既存登録/プレビュー更新を接続した。UIは非同期・生成中の無効化・実段階・取消・開始要求30秒/生成10分の制限を持つ。
+- 要求/スレッド/ターン/画像項目と作品/ページ/コマ/素材/管理画面のID、生成条件、参照ファイルを照合。遅延/重複/別要求・条件変更を拒否し、内側の入力画面中の採用は待つ。コピー先を検証して保存成功後に採用し、元生成ファイルと旧画像を保持。プレビューはバックグラウンド復号済みの画像を受け渡す。受信コピー・未採用候補の処理はその要求の所有分だけ。通常の外部register_imageもコピー先検証・元データ保護を強化。
+- 実生成1回で9 PASS。元/採用先SHA-256は59149B2C4480402131216CB044387059A36738881C33E6CDA09A7C35BDEDE11Dで一致。UIボタン/表示・タイマー継続・元保持とreceiptのIDを確認。以後は模擬結果を使用し、再生成していない。模擬73 PASSは早期通知/重複/不正画像/誤スレッド・ターン/複数画像/時間超過/停止したstdin/取消/閉じる/ページ切替/保存失敗/警告付き採用/再送/内側モーダルの待機を含む。
+- 古い読み取り専用条件による自動承認レビューの拒否は、新しいユーザー指示の証跡を受け、同じDebugビルド/検証コールを1回再試行して許可された（session82706、Checks-Debug-2 exit0/1728 PASS）。接続断で結果不明だったcell79のReleaseビルドも復帰後にログとEXEで完了を確認し、重複実行しなかった。
+- ComicPerformanceと全呼出しはDEBUG条件内。固定39カテゴリの件数/合計/最大/50ms以上だけを集計。操作側のロックは待たず欠落件数を記録し、2秒周期の専用スレッドで書く。プロセスごと256KiB×2のJSONLへ循環出力。同じデータ領域全体は4MiB・64ファイルまでで、起動ID付きのファイルを使い、既存ログを削除せず追加を抑止する。ファイルロックで同時起動・Windowsセッション間も調整。本文・プロンプト・画像パスを含めない。Releaseにはユニット/DCU/識別文字列/実行時性能ログがなく、詳細計測追加前後のReleaseはリソース以外の全PEセクションが一致した。
+- 最終Debug1728 PASS、Release1728 PASS、CLI4、計測付き画像連携73、従来の表示111/読込42もPASS。早期return/例外の集計、50万回、無効時ログなし、容量/JSON項目/Release除外など性能12チェックPASS。最終ビルドは両構成ともエラー/警告/ヒントなし。全検証用データを残し、追加清掃をしていない。
+- 隔離した実VCLで10シナリオを測定。温まった6ページ描画906ms/30描画中、FrameRgn679ms（約75%）、吹き出し770ms。画像探索約4ms/240回、文字配置約30ms/200回で、主因はGDIの縁描画。フォーム再描画平均63ms、空白クリック1.8ms、6ページ保存28ms、80ページ保存252ms。冷えたフィルター再計算は最大305ms。親子時間は重複するため合計しない。サムネイルの毎回再描画と同期SaveDraftも改善候補。高速化・MapRakuライブラリ移行は未実施。
+- 試用で変更されたサンプルProject/Data/SourceImagesの現状52ファイルをBefore-final-sample-hashes.csvへ記録し保持。ZIPは既存の配布用作品を維持してEXE/README/Summaryだけ更新する。通常版/同梱版/ZIPは最終Releaseへ同期し、直前のEXE/ZIP/文書はBefore-final-artifactsへ保存。ユーザーJSONを配布用の状態で上書きしない。稼働ユーザーEXEの強制終了・音・push・追加清掃は行わない。
+- 証跡はTestOutput/Generation-20261014-0202/。Generation-verification.json、Performance-verification.json、Final-bounded-core-Debug/verification.json、Final-bounded-core-Release/verification.json、CLI-bounded-final/results.json、Fake-run-6/result.txt、Real-run-1/result.txt、Performance-ui-detail/、Final-verification.json、Reproduction/を参照。
+- 残りは実IME候補/実変換/他アプリ復帰、物理マウス・実モニターDPI、長時間制作、高度組版等。以下の記録は過去の区切り。
+
 ## ホイールズーム・表示パン（2026-10-14 01:18 UTC開始）
 
 - MainFormに保存対象外の表示倍率/オフセット/パン状態を追加。描画、画面→作品座標、ヒット、スナップの表示倍率を共通更新する。描画先の整数幅から実倍率を求め、rendererと入力の倍率を一致させる。ホイールはマウス位置を基準に1段15%、部分デルタにも対応し、フィット比0.1〜16で制限。パンを96PPI基準で保持し、ページ端32px相当を画面内へ残す。Ctrl+0、ページ/作品切替でフィットへ戻す。

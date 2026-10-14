@@ -17,6 +17,7 @@ type
     constructor Create;
     destructor Destroy; override;
     procedure ClearCache;
+    procedure PrimeImage(const FileName: string; Bitmap: TBitmap);
     procedure DrawImage(C: TCanvas; const FileName: string; const Target: TRect);
     function ImageBounds(Project: TComicProject; Panel: TComicPanel): TRectF;
     function BalloonTextBounds(Balloon: TComicBalloon): TRectF;
@@ -31,6 +32,7 @@ function BalloonBodyRegion(Balloon: TComicBalloon; const Origin: TPoint; Scale: 
 function BalloonRegion(Balloon: TComicBalloon; const Origin: TPoint; Scale: Double): HRGN;
 function BuildBalloonTextLayout(Canvas: TCanvas; Balloon: TComicBalloon; Layout: TComicTextLayout): Double;
 implementation
+{$IFDEF DEBUG}uses ComicPerformance;{$ENDIF}
 function TailRegion(Tail: TComicTail; const Origin: TPoint; Scale: Double): HRGN;
 var Handles: TArray<TPointF>; Points: array[0..2] of TPoint; I,X,Y,Radius: Integer; T: Double; Circle: HRGN;
   function Map(const P: TPointF): TPoint;
@@ -49,10 +51,12 @@ begin
   end;
 end;
 function BalloonBodyRegion(Balloon: TComicBalloon; const Origin: TPoint; Scale: Double): HRGN;
+{$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
 const Samples=384;
 var R: TRect; Points: TArray<TPoint>; I,K,Count: Integer;
   RX,RY,CX,CY,Angle,DX,DY,Extent,Low,High,Middle,Radius,X,Y,Factor,Phase: Double;
 begin
+  {$IFDEF DEBUG}PerfScope.Start(cpBalloonBody);{$ENDIF}
   R:=Rect(Origin.X+Round(Balloon.Bounds.Left*Scale),Origin.Y+Round(Balloon.Bounds.Top*Scale),
     Origin.X+Round(Balloon.Bounds.Right*Scale),Origin.Y+Round(Balloon.Bounds.Bottom*Scale));
   if Balloon.Contour=bcPlain then Exit(ShapeRegion(R,Balloon.Shape));
@@ -93,16 +97,20 @@ begin
   Result:=CreatePolygonRgn(Points[0],Length(Points),WINDING);
 end;
 function BalloonRegion(Balloon: TComicBalloon; const Origin: TPoint; Scale: Double): HRGN;
+{$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
 var Tail: TComicTail; TailShape: HRGN;
 begin
+  {$IFDEF DEBUG}PerfScope.Start(cpBalloonRegion);{$ENDIF}
   Result:=BalloonBodyRegion(Balloon,Origin,Scale);
   for Tail in Balloon.Tails do begin TailShape:=TailRegion(Tail,Origin,Scale);
     try CombineRgn(Result,Result,TailShape,RGN_OR); finally DeleteObject(TailShape); end;
   end;
 end;
 function PanelRegion(Panel: TComicPanel; const Origin: TPoint; Scale: Double; DeviceCanvas: TCanvas): HRGN;
+{$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
 var R: TRect; Points: TArray<TPoint>; I: Integer; Bounds: array[0..1] of TPoint;
 begin
+  {$IFDEF DEBUG}PerfScope.Start(cpPanelRegion);{$ENDIF}
   if Panel.Shape=3 then begin
     SetLength(Points,Length(Panel.Vertices));
     for I:=0 to High(Points) do Points[I]:=Point(Origin.X+Round(Panel.Vertices[I].X*Scale),Origin.Y+Round(Panel.Vertices[I].Y*Scale));
@@ -146,15 +154,19 @@ begin FFilteredCache.Free; FOverlayCache.Free; FCache.Free; inherited; end;
 procedure TComicRenderer.ClearCache;
 begin FCache.Clear; FOverlayCache.Clear; FFilteredCache.Clear; FFilteredBytes:=0; end;
 function TComicRenderer.FilteredPanel(Project: TComicProject; Panel: TComicPanel; Img: TBitmap; out Crop: TRect; out Owned: Boolean): TBitmap;
+{$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
 const CacheLimit=48*1024*1024;
 var Key: string; ImageRect,PanelRect: TRect; Bounds: TRectF; Bytes: UInt64;
+  {$IFDEF DEBUG}BuildScope: TComicPerfScope;{$ENDIF}
 begin
+  {$IFDEF DEBUG}PerfScope.Start(cpFilterLookup);{$ENDIF}
   Result:=nil; Owned:=False; PanelRect:=Rect(Round(Panel.Bounds.Left),Round(Panel.Bounds.Top),Round(Panel.Bounds.Right),Round(Panel.Bounds.Bottom));
   if not IntersectRect(Crop,PanelRect,Rect(0,0,Project.Width,Project.Height)) then Exit;
   Key:=Project.Folder+'|'+Panel.ID+'|'+Panel.ImageID+'|'+IntToStr(Project.Width)+'x'+IntToStr(Project.Height)+'|'+
     IntToStr(Panel.FilterKind)+':'+IntToStr(Panel.FilterStrength)+'|'+FloatToStr(Panel.Bounds.Left)+'|'+FloatToStr(Panel.Bounds.Top)+'|'+
     FloatToStr(Panel.Bounds.Right)+'|'+FloatToStr(Panel.Bounds.Bottom)+'|'+FloatToStr(Panel.Zoom)+'|'+FloatToStr(Panel.PanX)+'|'+FloatToStr(Panel.PanY);
-  if FFilteredCache.TryGetValue(Key,Result) then Exit;
+  if FFilteredCache.TryGetValue(Key,Result) then begin {$IFDEF DEBUG}CountComicPerformance(cpFilterHit);{$ENDIF} Exit; end;
+  {$IFDEF DEBUG}BuildScope.Start(cpFilterBuild);{$ENDIF}
   Result:=TBitmap.Create; Owned:=True;
   try
     Result.PixelFormat:=pf24bit; Result.SetSize(Crop.Width,Crop.Height); Result.Canvas.Brush.Color:=$F5F2EF;
@@ -171,8 +183,10 @@ begin
   except Result.Free; Result:=nil; Owned:=False; raise; end;
 end;
 procedure TComicRenderer.DrawOverlay(Canvas: TCanvas; const FileName: string; const Target: TRect);
+{$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
 var PNG: TPngImage;
 begin
+  {$IFDEF DEBUG}PerfScope.Start(cpOverlayDraw);{$ENDIF}
   if not FileExists(FileName) then Exit;
   if not FOverlayCache.TryGetValue(FileName,PNG) then begin PNG:=TPngImage.Create;
     try PNG.LoadFromFile(FileName); FOverlayCache.Add(FileName,PNG); except PNG.Free; raise; end;
@@ -204,8 +218,10 @@ begin
   SetStretchBltMode(C.Handle,HALFTONE); C.StretchDraw(R,B);
 end;
 function TComicRenderer.BalloonTextBounds(Balloon: TComicBalloon): TRectF;
+{$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
 var Bitmap: TBitmap; Layout: TComicTextLayout; TextBounds: TRect; Scale: Double; Center: TPointF;
 begin
+  {$IFDEF DEBUG}PerfScope.Start(cpTextBounds);{$ENDIF}
   Result:=TRectF.Empty; if Balloon.Text='' then Exit;
   Bitmap:=TBitmap.Create; Layout:=TComicTextLayout.Create;
   try
@@ -228,11 +244,20 @@ begin
   Layout.Translate(-(Bounds.Left+Bounds.Right) div 2,-(Bounds.Top+Bounds.Bottom) div 2);
   Result:=Balloon.FontSize/BaseFont;
 end;
-function TComicRenderer.Image(const FileName: string): TBitmap;
-var P: TPicture;
+procedure TComicRenderer.PrimeImage(const FileName: string; Bitmap: TBitmap);
 begin
-  Result:=nil; if (FileName='') or not FileExists(FileName) then Exit;
-  if FCache.TryGetValue(FileName,Result) then Exit;
+  if Bitmap=nil then Exit;
+  try FCache.AddOrSetValue(FileName,Bitmap); except Bitmap.Free; raise; end;
+end;
+function TComicRenderer.Image(const FileName: string): TBitmap;
+{$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
+var P: TPicture;
+  {$IFDEF DEBUG}DecodeScope: TComicPerfScope;{$ENDIF}
+begin
+  {$IFDEF DEBUG}PerfScope.Start(cpImageLookup);{$ENDIF}
+  Result:=nil; if (FileName='') or not {$IFDEF DEBUG}ComicPerfFileExists{$ELSE}FileExists{$ENDIF}(FileName) then Exit;
+  if FCache.TryGetValue(FileName,Result) then begin {$IFDEF DEBUG}CountComicPerformance(cpImageHit);{$ENDIF} Exit; end;
+  {$IFDEF DEBUG}DecodeScope.Start(cpImageDecode);{$ENDIF}
   P:=TPicture.Create;
   try
     P.LoadFromFile(FileName); Result:=TBitmap.Create;
@@ -243,14 +268,17 @@ begin
 end;
 procedure TComicRenderer.Draw(C: TCanvas; Project: TComicProject; Page: TComicPage;
   const Target: TRect; Guides: Boolean);
+{$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
 var S: Double; P: TComicPanel; B: TComicBalloon; R,D: TRect;
   G: HRGN; Saved, PageDC: Integer; Img: TBitmap; Overlay: TComicOverlay; FileName: string;
   function Map(const A: TRectF): TRect;
   begin Result:=Rect(Target.Left+Round(A.Left*S),Target.Top+Round(A.Top*S),
     Target.Left+Round(A.Right*S),Target.Top+Round(A.Bottom*S)); end;
   procedure PanelImage;
+  {$IFDEF DEBUG}var LocalPerf: TComicPerfScope;{$ENDIF}
   var Bitmap: TBitmap; Crop,Dest: TRect; Owned: Boolean;
   begin
+    {$IFDEF DEBUG}LocalPerf.Start(cpPanelImage);{$ENDIF}
     C.Brush.Color:=$F5F2EF; C.FillRect(R);
     if (P.FilterKind=0) or (P.FilterStrength=0) then begin
       if Img<>nil then begin SetStretchBltMode(C.Handle,HALFTONE); C.StretchDraw(D,Img); end; Exit;
@@ -262,9 +290,11 @@ var S: Double; P: TComicPanel; B: TComicBalloon; R,D: TRect;
     finally if Owned then Bitmap.Free; end;
   end;
   procedure PanelFrame;
+  {$IFDEF DEBUG}var LocalPerf: TComicPerfScope;{$ENDIF}
   var Inner,Shifted: HRGN; Insets: TPoint; Distance,I: Integer; Points: TArray<TPoint>; Vertex: TPointF;
     Directions: array[0..7] of TPoint; Pen: HPEN; Brush: TLogBrush; FrameDC: Integer;
   begin
+    {$IFDEF DEBUG}LocalPerf.Start(cpPanelFrame);{$ENDIF}
     if P.BorderWidth=0 then Exit; G:=PanelRegion(P,Target.TopLeft,S);
     try
       C.Brush.Color:=P.BorderColor;
@@ -284,7 +314,7 @@ var S: Double; P: TComicPanel; B: TComicBalloon; R,D: TRect;
           end;
         finally RestoreDC(C.Handle,FrameDC); DeleteObject(Pen); end;
       end else begin
-        FrameRgn(C.Handle,G,C.Brush.Handle,Max(1,Round(P.BorderWidth*S)),Max(1,Round(P.BorderWidth*S)));
+        {$IFDEF DEBUG}ComicPerfFrameRgn{$ELSE}FrameRgn{$ENDIF}(C.Handle,G,C.Brush.Handle,Max(1,Round(P.BorderWidth*S)),Max(1,Round(P.BorderWidth*S)));
         if P.FrameKind=1 then begin
           Inner:=CreateRectRgn(0,0,0,0); Shifted:=CreateRectRgn(0,0,0,0);
           try
@@ -292,15 +322,17 @@ var S: Double; P: TComicPanel; B: TComicBalloon; R,D: TRect;
             Directions[0]:=Point(Distance,0); Directions[1]:=Point(-Distance,0); Directions[2]:=Point(0,Distance); Directions[3]:=Point(0,-Distance);
             Directions[4]:=Point(Distance,Distance); Directions[5]:=Point(-Distance,Distance); Directions[6]:=Point(Distance,-Distance); Directions[7]:=Point(-Distance,-Distance);
             for Insets in Directions do begin CombineRgn(Shifted,G,0,RGN_COPY); OffsetRgn(Shifted,Insets.X,Insets.Y); CombineRgn(Inner,Inner,Shifted,RGN_AND); end;
-            FrameRgn(C.Handle,Inner,C.Brush.Handle,Max(1,Round(P.BorderWidth*S/2)),Max(1,Round(P.BorderWidth*S/2)));
+            {$IFDEF DEBUG}ComicPerfFrameRgn{$ELSE}FrameRgn{$ENDIF}(C.Handle,Inner,C.Brush.Handle,Max(1,Round(P.BorderWidth*S/2)),Max(1,Round(P.BorderWidth*S/2)));
           finally DeleteObject(Shifted); DeleteObject(Inner); end;
         end;
       end;
     finally DeleteObject(G); end;
   end;
   procedure Balloon(A: TComicBalloon);
+  {$IFDEF DEBUG}var LocalPerf: TComicPerfScope;{$ENDIF}
   var Owner,Candidate: TComicPanel; Layout: TComicTextLayout; Cell: TComicTextCell; TextScale,CX,CY: Double; CellBounds: TRect;
   begin
+    {$IFDEF DEBUG}LocalPerf.Start(cpBalloonDraw);{$ENDIF}
     Saved:=SaveDC(C.Handle);
     try
       if not A.Overflow then begin
@@ -312,9 +344,9 @@ var S: Double; P: TComicPanel; B: TComicBalloon; R,D: TRect;
       if not A.Transparent then begin
         G:=BalloonRegion(A,Target.TopLeft,S);
         try
-          C.Brush.Color:=A.FillColor; FillRgn(C.Handle,G,C.Brush.Handle);
+          C.Brush.Color:=A.FillColor; {$IFDEF DEBUG}ComicPerfFillRgn{$ELSE}FillRgn{$ENDIF}(C.Handle,G,C.Brush.Handle);
           if A.BorderWidth>0 then begin C.Brush.Color:=A.BorderColor;
-            FrameRgn(C.Handle,G,C.Brush.Handle,Max(1,Round(A.BorderWidth*S)),Max(1,Round(A.BorderWidth*S))); end;
+            {$IFDEF DEBUG}ComicPerfFrameRgn{$ELSE}FrameRgn{$ENDIF}(C.Handle,G,C.Brush.Handle,Max(1,Round(A.BorderWidth*S)),Max(1,Round(A.BorderWidth*S))); end;
         finally DeleteObject(G); end;
       end else if Guides then begin
         C.Pen.Color:=$C5A26C; C.Pen.Style:=psDot; C.Pen.Width:=1; C.Brush.Style:=bsClear; C.Rectangle(R); C.Pen.Style:=psSolid;
@@ -336,6 +368,7 @@ var S: Double; P: TComicPanel; B: TComicBalloon; R,D: TRect;
     finally RestoreDC(C.Handle,Saved); C.Refresh; end;
   end;
 begin
+  {$IFDEF DEBUG}PerfScope.Start(cpRender);{$ENDIF}
   S:=Target.Width/Project.Width; PageDC:=SaveDC(C.Handle);
   try
     IntersectClipRect(C.Handle,Target.Left,Target.Top,Target.Right,Target.Bottom);
