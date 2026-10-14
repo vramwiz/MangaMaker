@@ -1,0 +1,4 @@
+PASS: formal SaveProject/OpenProjectFile roundtrip before and after export
+PASS: 6 sample pages exported; unchanged export reuses 6 cached PNGs
+PASS: hidden current VCL form captures 4 pages without touching existing libraries
+PROJECT=D:\DelphiProg\MyApp\MangaMaker\Samples\FeatureTour-20261014\Project\Project.json

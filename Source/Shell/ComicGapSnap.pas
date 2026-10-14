@@ -12,6 +12,10 @@ type
 
 function FindGapSnap(Panels: TObjectList<TComicPanel>; const P: TPointF; Tolerance: Double; const ExcludeID: string): TComicGapSnap;
 
+function SnapPanelBounds(Panels: TObjectList<TComicPanel>; const Bounds,Frame: TRectF;
+  Tolerance: Double; Handle: Integer; const ExcludedIDs: TArray<string>;
+  MinimumWidth,MinimumHeight: Double): TRectF;
+
 implementation
 
 uses System.Math;
@@ -49,6 +53,89 @@ begin
         for Gap in Vertical do begin CandidateY(A.Bounds.Bottom+Gap); CandidateY(A.Bounds.Top-Gap); end;
     end;
   finally Vertical.Free; Horizontal.Free; end;
+end;
+
+function SnapPanelBounds(Panels: TObjectList<TComicPanel>; const Bounds,Frame: TRectF;
+  Tolerance: Double; Handle: Integer; const ExcludedIDs: TArray<string>;
+  MinimumWidth,MinimumHeight: Double): TRectF;
+var A,B: TComicPanel; Horizontal,Vertical: TList<Single>; Stationary: TList<TComicPanel>; Point: TPointF;
+  Gap,RightGap,BottomGap,BestX,BestY,ShiftX,ShiftY: Double; PriorityX,PriorityY: Integer;
+  function Selected(Panel: TComicPanel): Boolean;
+  var ID: string;
+  begin
+    Result:=False; for ID in ExcludedIDs do if Panel.ID=ID then Exit(True);
+  end;
+  procedure CandidateX(Target,Anchor: Double; Priority: Integer);
+  var Offset,Distance,Width: Double;
+  begin
+    Offset:=Target-Anchor; Distance:=Abs(Offset); Width:=Bounds.Width;
+    if Handle in [1,7,8] then Width:=Width-Offset else if Handle in [3,4,5] then Width:=Width+Offset;
+    if (Distance>Tolerance) or ((Handle<>0) and (Width<MinimumWidth-0.0001)) then Exit;
+    if (Distance<BestX) or ((Distance=BestX) and ((Priority<PriorityX) or ((Priority=PriorityX) and (Offset<ShiftX)))) then begin
+      BestX:=Distance; ShiftX:=Offset; PriorityX:=Priority;
+    end;
+  end;
+  procedure CandidateY(Target,Anchor: Double; Priority: Integer);
+  var Offset,Distance,Height: Double;
+  begin
+    Offset:=Target-Anchor; Distance:=Abs(Offset); Height:=Bounds.Height;
+    if Handle in [1,2,3] then Height:=Height-Offset else if Handle in [5,6,7] then Height:=Height+Offset;
+    if (Distance>Tolerance) or ((Handle<>0) and (Height<MinimumHeight-0.0001)) then Exit;
+    if (Distance<BestY) or ((Distance=BestY) and ((Priority<PriorityY) or ((Priority=PriorityY) and (Offset<ShiftY)))) then begin
+      BestY:=Distance; ShiftY:=Offset; PriorityY:=Priority;
+    end;
+  end;
+  procedure Axis(X,Y: Double);
+  begin
+    if (Handle=0) or (Handle in [1,7,8]) then CandidateX(X,Bounds.Left,0);
+    if (Handle=0) or (Handle in [3,4,5]) then CandidateX(X,Bounds.Right,0);
+    if (Handle=0) or (Handle in [1,2,3]) then CandidateY(Y,Bounds.Top,0);
+    if (Handle=0) or (Handle in [5,6,7]) then CandidateY(Y,Bounds.Bottom,0);
+  end;
+begin
+  Result:=Bounds;
+  if Bounds.IsEmpty or (Tolerance<0) or not (Handle in [0..8]) then Exit;
+  BestX:=Tolerance+1; BestY:=Tolerance+1; ShiftX:=0; ShiftY:=0; PriorityX:=MaxInt; PriorityY:=MaxInt;
+  Axis(Frame.Left,Frame.Top); Axis(Frame.Right,Frame.Bottom);
+  Horizontal:=TList<Single>.Create; Vertical:=TList<Single>.Create; Stationary:=TList<TComicPanel>.Create;
+  try
+    for A in Panels do if not Selected(A) then Stationary.Add(A);
+    for A in Stationary do begin
+      Axis(A.Bounds.Left,A.Bounds.Top); Axis(A.Bounds.Right,A.Bounds.Bottom);
+      if A.Shape=3 then for Point in A.Vertices do Axis(Point.X,Point.Y);
+      // Only stationary nearest neighbours define a reusable gap. Selected
+      // members never attract one another or change targets during a drag.
+      if A.Shape=3 then Continue;
+      RightGap:=Infinity; BottomGap:=Infinity;
+      for B in Stationary do if (A<>B) and (B.Shape<>3) then begin
+        Gap:=B.Bounds.Left-A.Bounds.Right;
+        if (Gap>0.01) and (Min(A.Bounds.Bottom,B.Bounds.Bottom)>Max(A.Bounds.Top,B.Bounds.Top)) then RightGap:=Min(RightGap,Gap);
+        Gap:=B.Bounds.Top-A.Bounds.Bottom;
+        if (Gap>0.01) and (Min(A.Bounds.Right,B.Bounds.Right)>Max(A.Bounds.Left,B.Bounds.Left)) then BottomGap:=Min(BottomGap,Gap);
+      end;
+      if not IsInfinite(RightGap) and not Horizontal.Contains(RightGap) then Horizontal.Add(RightGap);
+      if not IsInfinite(BottomGap) and not Vertical.Contains(BottomGap) then Vertical.Add(BottomGap);
+    end;
+    for A in Stationary do if A.Shape<>3 then begin
+      if Min(Bounds.Bottom,A.Bounds.Bottom)>Max(Bounds.Top,A.Bounds.Top) then
+        for Gap in Horizontal do begin
+          if (Handle=0) or (Handle in [1,7,8]) then CandidateX(A.Bounds.Right+Gap,Bounds.Left,1);
+          if (Handle=0) or (Handle in [3,4,5]) then CandidateX(A.Bounds.Left-Gap,Bounds.Right,1);
+        end;
+      if Min(Bounds.Right,A.Bounds.Right)>Max(Bounds.Left,A.Bounds.Left) then
+        for Gap in Vertical do begin
+          if (Handle=0) or (Handle in [1,2,3]) then CandidateY(A.Bounds.Bottom+Gap,Bounds.Top,1);
+          if (Handle=0) or (Handle in [5,6,7]) then CandidateY(A.Bounds.Top-Gap,Bounds.Bottom,1);
+        end;
+    end;
+  finally Stationary.Free; Vertical.Free; Horizontal.Free; end;
+  if Handle=0 then Result.Offset(ShiftX,ShiftY)
+  else begin
+    if Handle in [1,7,8] then Result.Left:=Result.Left+ShiftX;
+    if Handle in [3,4,5] then Result.Right:=Result.Right+ShiftX;
+    if Handle in [1,2,3] then Result.Top:=Result.Top+ShiftY;
+    if Handle in [5,6,7] then Result.Bottom:=Result.Bottom+ShiftY;
+  end;
 end;
 
 end.

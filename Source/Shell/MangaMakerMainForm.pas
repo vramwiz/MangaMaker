@@ -5,7 +5,7 @@ interface
 uses Winapi.Windows, Winapi.Messages, Winapi.ShellAPI, Winapi.Imm, System.SysUtils, System.Classes, System.Types, System.UITypes, System.Math,
   System.IOUtils, System.Generics.Collections, System.JSON, System.Hash, Vcl.Controls, Vcl.Forms,
   Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.ComCtrls, Vcl.Menus, Vcl.Dialogs,
-  Vcl.Graphics, Vcl.Imaging.pngimage, ComicModel, ComicRender, ComicAssetDialog, ComicLayouts, ComicExport, ComicEditing, ComicIconButton, ComicGeometry, ComicTextInput, ComicTextLayout, WindowsImeController, ComicPagePresets, ComicPageDialog, ComicPanelTransform, ComicFontHistory, ComicGenerationPresets, ComicGenerationDialog, ComicBridge, ComicAssetEditing, ComicCharacterRefs, ComicEffects, ComicEffectDialog, ComicFilters, ComicRecentProjects, ComicGapSnap, ComicExportDialog;
+  Vcl.Graphics, Vcl.Imaging.pngimage, ComicModel, ComicRender, ComicAssetDialog, ComicLayouts, ComicExport, ComicEditing, ComicIconButton, ComicGeometry, ComicTextInput, ComicTextLayout, WindowsImeController, ComicPagePresets, ComicPageDialog, ComicPanelTransform, ComicFontHistory, ComicGenerationPresets, ComicGenerationDialog, ComicBridge, ComicAssetEditing, ComicCharacterRefs, ComicEffects, ComicEffectDialog, ComicFilters, ComicRecentProjects, ComicGapSnap, ComicExportDialog, ComicProjectDialog;
 
 type
   TComicPaintBox = class(TPaintBox)
@@ -14,7 +14,10 @@ type
     property ControlStyle;
   end;
   TComicView = class(TPanel)
+  protected
+    procedure WndProc(var Message: TMessage); override;
   public
+    OnCaptureLost: TNotifyEvent;
     property ImeMode;
   end;
   TMainForm = class(TForm)
@@ -63,8 +66,15 @@ type
     FFirst,FDragging,FDirty,FRefreshing: Boolean;
     FStart,FLast: TPointF;
     FDragBounds: TRectF;
+    FDragMouse: TPoint;
     FPageRect: TRect;
     FScale: Double;
+    FViewZoom: Double;
+    FViewPan,FViewPanStart: TPointF;
+    FViewPanMouse: TPoint;
+    FViewPanButton: TMouseButton;
+    FViewPanning,FViewPanMoved: Boolean;
+    FViewportPageID: string;
     FDragHandle: Integer;
     FDragSnapshot: string;
     FDragMoved: Boolean;
@@ -76,7 +86,7 @@ type
     FTailIndex,FDragTailHandle: Integer;
     FDragTailState: TComicTailState;
     FDragBalloonTransform: TComicBalloonTransform;
-    FBorderWidth: TComboBox;
+    FBorderWidth,FContour: TComboBox;
     FBorderColor,FFillColor: TColor;
     FDragTextOffset: TPointF;
     FDragFontSize: Integer;
@@ -111,7 +121,7 @@ type
     procedure RefreshRecentMenu;
     procedure RecentClick(Sender: TObject);
     procedure ClearRecent(Sender: TObject);
-    function CreateExportOptions: TComicExportDialog;
+    function CreateExportOptions: TComicExportDialog; virtual;
     procedure Notify(const Message: string);
     function InsideBalloonBody(Balloon: TComicBalloon; const P: TPointF): Boolean;
     procedure TailClick(const P: TPointF);
@@ -127,6 +137,7 @@ type
     procedure PreservePanelImage(Panel: TComicPanel; const Original: TRectF);
     procedure ResetGeometryInput;
     function SnapCreationPoint(const P: TPointF; const ExcludePanelID: string=''): TPointF;
+    function SnapPanelDragBounds(const Bounds: TRectF): TRectF;
     procedure PolygonClick(const P: TPointF);
     procedure SplitClick(const P: TPointF);
     procedure CommitSplit(Index: Integer);
@@ -188,6 +199,13 @@ type
     procedure MouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X,Y: Integer); reintroduce;
     procedure MouseMove(Sender: TObject; Shift: TShiftState; X,Y: Integer); reintroduce;
     procedure MouseUp(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X,Y: Integer); reintroduce;
+    procedure UpdateViewport;
+    procedure ResetViewport;
+    procedure BeginViewPan(Button: TMouseButton; X,Y: Integer);
+    procedure EndViewPan(Cancel: Boolean);
+    procedure ViewCaptureLost(Sender: TObject);
+    procedure ViewWheel(Sender: TObject; Shift: TShiftState; WheelDelta: Integer; MousePos: TPoint; var Handled: Boolean);
+    function EmptyViewPoint(const P: TPointF): Boolean;
     function ToPage(X,Y: Integer): TPointF;
     function HitPanel(const P: TPointF): Integer;
     function HitBalloon(const P: TPointF): Integer;
@@ -207,6 +225,8 @@ type
     procedure Tail(Sender: TObject);
     procedure CloseCheck(Sender: TObject; var CanClose: Boolean);
     procedure Key(Sender: TObject; var Key: Word; Shift: TShiftState);
+  protected
+    function CreateProjectDialog: TComicProjectOpenDialog; virtual;
   public
     procedure SmokeTest(const Folder: string);
     constructor Create(AOwner: TComponent); override;
@@ -222,9 +242,15 @@ implementation
 
 function PrintWindow(hWnd: HWND; hdcBlt: HDC; nFlags: UINT): BOOL; stdcall; external 'user32.dll';
 
+procedure TComicView.WndProc(var Message: TMessage);
+begin
+  if ((Message.Msg=WM_CAPTURECHANGED) or (Message.Msg=WM_CANCELMODE) or (Message.Msg=CM_CANCELMODE)) and
+    Assigned(OnCaptureLost) then OnCaptureLost(Self);
+  inherited;
+end;
 constructor TMainForm.Create(AOwner: TComponent);
 begin
-  inherited; FPageIndex:=-1; FPanelIndex:=-1; FBalloonIndex:=-1; FTailIndex:=-1; FDragVertex:=-1; FScale:=1; FFillColor:=clWhite; FEffectIndex:=-1;
+  inherited; FPageIndex:=-1; FPanelIndex:=-1; FBalloonIndex:=-1; FTailIndex:=-1; FDragVertex:=-1; FScale:=1; FViewZoom:=1; FFillColor:=clWhite; FEffectIndex:=-1;
   FTesting:=(ParamCount>0) and (ParamStr(1)='--self-test');
   FCharacters:=TObjectList<TComicAsset>.Create; FRenderer:=TComicRenderer.Create;
   FUndo:=TList<string>.Create; FRedo:=TList<string>.Create;
@@ -261,7 +287,7 @@ begin
     except on E: Exception do FStatus.SimpleText:='ローカル連携を開始できません：'+E.Message; end;
 end;
 destructor TMainForm.Destroy;
-begin FBridge.Free; FProject.Free; FCharacters.Free; FRenderer.Free; FUndo.Free; FRedo.Free; FLayouts.Free; FPagePresets.Free; FFontHistory.Free; FGenerationPresets.Free; FEffectMaterials.Free; FRecent.Free; FIconButtons.Free; FGeometryPoints.Free; FSelectedPanels.Free; inherited; end;
+begin if FView<>nil then FView.OnCaptureLost:=nil; EndViewPan(False); FBridge.Free; FProject.Free; FCharacters.Free; FRenderer.Free; FUndo.Free; FRedo.Free; FLayouts.Free; FPagePresets.Free; FFontHistory.Free; FGenerationPresets.Free; FEffectMaterials.Free; FRecent.Free; FIconButtons.Free; FGeometryPoints.Free; FSelectedPanels.Free; inherited; end;
 procedure TMainForm.BridgeRequest(const Request: string; out Reply: string);
 var Value: TJSONValue; Input,Output,Data,Info: TJSONObject; Items: TJSONArray;
   Action,Scope,ID,ParentID,Root,Path,Relative,Before,OldFile,Ext,RequestID,Mode,SourceID,RefID: string;
@@ -729,6 +755,10 @@ begin
     if (IconButton.Role=brApplyText) and (IconButton.Top=D(468)) then IconButton.Top:=D(528);
     if IconButton.Role=brDeleteBalloon then IconButton.Top:=D(704);
   end;
+  LabelAt(Body,'本体の輪郭',12,586,24);
+  FContour:=TComboBox.Create(Self); FContour.Parent:=Body; FContour.SetBounds(D(114),D(582),D(168),D(28));
+  FContour.Style:=csDropDownList; FContour.Items.AddStrings(['通常','ギザギザ','波線','雲形']); FContour.ItemIndex:=0;
+  FContour.Hint:='基本形状を保った輪郭。選択後に「文字・設定を反映」で適用。'; FContour.ShowHint:=True;
   LabelAt(Body,'縁の太さ（出力px）',12,626,24);
   FBorderWidth:=TComboBox.Create(Self); FBorderWidth.Parent:=Body; FBorderWidth.SetBounds(D(12),D(654),D(96),D(28));
   FBorderWidth.Style:=csDropDownList; FBorderWidth.Items.AddStrings(['0','1','2','3','4','6','8','12']); FBorderWidth.ItemIndex:=3;
@@ -765,9 +795,14 @@ begin
   FEffectPages.ActivePageIndex:=0;
   FView:=TComicView.Create(Self); FView.Parent:=Self; FView.Align:=alClient; FView.BevelOuter:=bvNone;
   FView.Color:=$302B28; FView.ParentBackground:=False; FView.DoubleBuffered:=True;
-  FView.ImeMode:=imDisable; FView.TabStop:=True;
+  FView.ImeMode:=imDisable; FView.TabStop:=True; FView.OnCaptureLost:=ViewCaptureLost;
+  OnMouseWheel:=ViewWheel;
   FCanvas:=TComicPaintBox.Create(Self); FCanvas.Parent:=FView; FCanvas.Align:=alClient; FCanvas.OnPaint:=Paint;
-  if FTesting then FCanvas.ControlStyle:=FCanvas.ControlStyle-[csCaptureMouse];
+  // Edits and view pans capture explicitly. VCL's automatic left-button
+  // release occurs before OnMouseUp and would look like unexpected capture
+  // loss, cancelling a legitimate edit before it can commit.
+  FCanvas.ControlStyle:=FCanvas.ControlStyle-[csCaptureMouse];
+  FCanvas.Hint:='ホイール: 表示拡大縮小 / 中央ドラッグ・空白の左ドラッグ: 表示移動 / Ctrl+0: 全体表示'; FCanvas.ShowHint:=True;
   FCanvas.OnMouseDown:=MouseDown; FCanvas.OnMouseMove:=MouseMove; FCanvas.OnMouseUp:=MouseUp;
   FCanvas.OnDblClick:=EditBalloonText; FCanvas.OnDragOver:=DragOver; FCanvas.OnDragDrop:=DragDrop;
   FTabs.ActivePageIndex:=0; FTabs.OnChange:=TabChanged;
@@ -781,7 +816,7 @@ begin
     FileExists(SafeChild(TPath.Combine(DataRoot,'Characters'),A.FileName)) then Exit(True);
 end;
 function TMainForm.NeedProject: Boolean;
-begin Result:=(FProject<>nil) and HasCharacter; if not Result then Notify('参照画像付きのキャラを登録し、作品を作成または開いてください。'); end;
+begin Result:=FProject<>nil; if not Result then Notify('作品を作成または開いてください。'); end;
 function TMainForm.ConfirmLeave: Boolean;
 var R: Integer;
 begin
@@ -820,8 +855,8 @@ begin
         Caption:=FProject.Title+'  /  '+FProject.Episode+' — MangaMaker'; if FDirty then Caption:='* '+Caption;
       end else Caption:='MangaMaker — AI漫画スタジオ';
     finally FImages.Items.EndUpdate; FPages.Items.EndUpdate; end;
-    FTabs.Enabled:=(FProject<>nil) and HasCharacter;
-    if not HasCharacter then FStatus.SimpleText:='はじめに［キャラ管理］で人物名と参照画像を登録してください。'
+    FTabs.Enabled:=FProject<>nil;
+    if (FProject=nil) and not HasCharacter then FStatus.SimpleText:='はじめに［キャラ管理］で人物名と参照画像を登録してください。'
     else if FProject=nil then FStatus.SimpleText:='［新規作品］で作品タイトルと話数を入力してください。'
     else if FImages.Count=0 then FStatus.SimpleText:='［画像管理］で場面を追加し、画像を登録してください。'
     else ShowPageStatus;
@@ -863,7 +898,7 @@ end;
 procedure TMainForm.UpdateIconState;
 var Button: TComicIconButton; CanEdit,HasPage,HasPanel,HasBalloon: Boolean;
 begin
-  if FTabs=nil then Exit; CanEdit:=(FProject<>nil) and HasCharacter; HasPage:=CanEdit and (Page<>nil);
+  if FTabs=nil then Exit; CanEdit:=FProject<>nil; HasPage:=CanEdit and (Page<>nil);
   HasPanel:=HasPage and (FPanelIndex>=0) and (FPanelIndex<Page.Panels.Count);
   HasBalloon:=HasPage and (FBalloonIndex>=0) and (FBalloonIndex<Page.Balloons.Count);
   for Button in FIconButtons do begin
@@ -978,22 +1013,29 @@ begin
   FDragVertices:=nil; FDragSnapshot:=''; FPageDropIndex:=-1;
   FreeAndNil(FProject); FProject:=Project;
   FPageIndex:=Min(0,FProject.Pages.Count-1); FPanelIndex:=-1; FBalloonIndex:=-1; FDirty:=Dirty;
-  FUndo.Clear; FRedo.Clear; FRenderer.ClearCache; RefreshUI;
+  FUndo.Clear; FRedo.Clear; FRenderer.ClearCache; ResetViewport; RefreshUI;
+end;
+function TMainForm.CreateProjectDialog: TComicProjectOpenDialog;
+var Folder: string;
+begin
+  Folder:=''; if FProject<>nil then Folder:=FProject.Folder;
+  Result:=TComicProjectOpenDialog.Create(Self);
+  ConfigureProjectOpenDialog(Result,DataRoot,Folder,Application.ExeName);
 end;
 procedure TMainForm.OpenProject(Sender: TObject);
-var D: TOpenDialog;
+var D: TComicProjectOpenDialog;
 begin
   CancelDrag;
-  if not HasCharacter then begin Characters(nil); if not HasCharacter then Exit; end;
-  if not ConfirmLeave then Exit; D:=TOpenDialog.Create(Self);
+  // Reading an existing project must not divert into the unrelated character
+  // manager. Character validation still guards creation/editing/production.
+  if not ConfirmLeave then Exit; D:=CreateProjectDialog;
   try
-    D.Filter:='作品ファイル (Project.json)|Project.json|JSON (*.json)|*.json'; D.InitialDir:=TPath.Combine(DataRoot,'Projects');
-    D.Options:=[ofFileMustExist,ofEnableSizing]; if not D.Execute then Exit;
+    if not D.Execute then Exit;
     OpenProjectFile(D.FileName);
   finally D.Free; end;
 end;
 procedure TMainForm.SaveProject(Sender: TObject);
-begin CancelDrag; if not NeedProject then Exit; FProject.Save; FDirty:=False; RefreshUI; FStatus.SimpleText:='保存しました：'+FProject.Folder;
+begin CancelDrag; if FProject=nil then Exit; FProject.Save; FDirty:=False; RefreshUI; FStatus.SimpleText:='保存しました：'+FProject.Folder;
   RememberProject(TPath.Combine(FProject.Folder,'Project.json')); end;
 procedure TMainForm.OpenProjectFile(const FileName: string; DraftChoice: Integer);
 var Project,Candidate: TComicProject; Saved,Draft,HistoryFile,SavedID: string; Restore,Dirty: Boolean;
@@ -1033,7 +1075,7 @@ procedure TMainForm.RecentClick(Sender: TObject);
 var Path: string; Index: Integer;
 begin
   Index:=TMenuItem(Sender).Tag; if (Index<0) or (Index>=FRecent.Items.Count) then Exit; Path:=FRecent.Items[Index].FileName;
-  CancelDrag; if not HasCharacter then begin Characters(nil); if not HasCharacter then Exit; end;
+  CancelDrag;
   if not ConfirmLeave then Exit; OpenProjectFile(Path);
 end;
 procedure TMainForm.ClearRecent(Sender: TObject);
@@ -1052,7 +1094,9 @@ procedure TMainForm.Images(Sender: TObject);
 var D: TAssetDialog; Before: string;
 begin
   CancelDrag;
-  if not NeedProject then Exit; Before:=FProject.Snapshot;
+  if not NeedProject then Exit;
+  if not HasCharacter then begin Notify('参照画像付きのキャラを先に登録してください。'); Exit; end;
+  Before:=FProject.Snapshot;
   D:=TAssetDialog.CreateManager(Self,FProject.Assets,FProject,False,True,GenerationPresets,FCharacters);
   FAssetManager:=D;
   try D.ShowModal; finally FAssetManager:=nil; D.Free; end;
@@ -1096,7 +1140,7 @@ begin
   Checkpoint; FProject.Pages.Move(FPageIndex,Dest); FPageIndex:=Dest; Changed(False);
 end;
 procedure TMainForm.PageSelect(Sender: TObject);
-begin if FRefreshing then Exit; CancelDrag; ResetGeometryInput; FSelectedPanels.Clear; FPageIndex:=FPages.ItemIndex; FPanelIndex:=-1; FBalloonIndex:=-1; FFirst:=False; ShowPageStatus; UpdateIconState; FCanvas.Invalidate; end;
+begin if FRefreshing then Exit; CancelDrag; ResetGeometryInput; FSelectedPanels.Clear; FPageIndex:=FPages.ItemIndex; ResetViewport; FPanelIndex:=-1; FBalloonIndex:=-1; FFirst:=False; ShowPageStatus; UpdateIconState; FCanvas.Invalidate; end;
 procedure TMainForm.TabChanged(Sender: TObject);
 begin CancelDrag; ResetGeometryInput; FSelectedPanels.Clear; FEffectIndex:=-1; FTool:=0; FFirst:=False; if FTabs.ActivePageIndex<>3 then FBalloonIndex:=-1; UpdateIconState; FCanvas.Invalidate; end;
 procedure TMainForm.DrawPageItem(Control: TWinControl; Index: Integer; Rect: TRect; State: TOwnerDrawState);
@@ -1409,6 +1453,25 @@ begin
   else Result:=AxisPoint;
   if UsedGap and (Hypot(Double(AxisPoint.X)-P.X,Double(AxisPoint.Y)-P.Y)+0.0001<Hypot(Double(Result.X)-P.X,Double(Result.Y)-P.Y)) then Result:=AxisPoint;
 end;
+function TMainForm.SnapPanelDragBounds(const Bounds: TRectF): TRectF;
+var Frame: TRectF; IDs: TArray<string>; MinimumWidth,MinimumHeight: Double; I: Integer;
+begin
+  Result:=Bounds; if (Page=nil) or not FSnap.Checked then Exit;
+  MinimumWidth:=30; MinimumHeight:=30;
+  if Length(FDragGroup)>1 then begin
+    SetLength(IDs,Length(FDragGroup)); MinimumWidth:=1; MinimumHeight:=1;
+    for I:=0 to High(FDragGroup) do begin
+      IDs[I]:=FDragGroup[I].ID;
+      MinimumWidth:=Max(MinimumWidth,FDragBounds.Width*Min(1,30/Max(0.001,FDragGroup[I].Bounds.Width)));
+      MinimumHeight:=Max(MinimumHeight,FDragBounds.Height*Min(1,30/Max(0.001,FDragGroup[I].Bounds.Height)));
+    end;
+  end else begin
+    if (FPanelIndex<0) or (FPanelIndex>=Page.Panels.Count) then Exit;
+    IDs:=[Page.Panels[FPanelIndex].ID];
+  end;
+  Frame:=TRectF.Create(FProject.MarginLeft,FProject.MarginTop,FProject.Width-FProject.MarginRight,FProject.Height-FProject.MarginBottom);
+  Result:=SnapPanelBounds(Page.Panels,Bounds,Frame,MulDiv(8,CurrentPPI,96)/Max(FScale,0.001),FDragHandle,IDs,MinimumWidth,MinimumHeight);
+end;
 procedure TMainForm.PolygonClick(const P: TPointF);
 var Panel: TComicPanel; Values: TArray<TPointF>;
 begin
@@ -1531,16 +1594,13 @@ var C: TCanvas; R: TRect; B: TRectF; HandlePoint: TPointF; HX,HY,I: Integer; IDs
   begin P:=ScreenPoint(A); Q:=ScreenPoint(B); C.MoveTo(P.X,P.Y); C.LineTo(Q.X,Q.Y); end;
 begin
   C:=FCanvas.Canvas; C.Brush.Color:=$302B28; C.FillRect(FCanvas.ClientRect);
-  if (Page=nil) or not HasCharacter then begin
+  if Page=nil then begin
     C.Font.Name:='Yu Gothic UI'; C.Font.Size:=15; C.Font.Color:=$D9D9D9; C.Brush.Style:=bsClear;
     if not HasCharacter then C.TextOut(36,80,'1. キャラ管理で人物と参照画像を登録')
     else C.TextOut(36,80,'2. 新規作品を作成、または作品を開く');
     C.Brush.Style:=bsSolid; Exit;
   end;
-  FScale:=Min((FCanvas.Width-48)/FProject.Width,(FCanvas.Height-48)/FProject.Height);
-  if FScale<=0 then Exit;
-  FPageRect:=Rect((FCanvas.Width-Round(FProject.Width*FScale)) div 2,24,0,0);
-  FPageRect.Right:=FPageRect.Left+Round(FProject.Width*FScale); FPageRect.Bottom:=24+Round(FProject.Height*FScale);
+  UpdateViewport;
   FRenderer.Draw(C,FProject,Page,FPageRect,True);
   B:=TRectF.Empty;
   if (FPanelIndex>=0) and (FPanelIndex<Page.Panels.Count) then begin
@@ -1616,8 +1676,111 @@ begin
     C.Pen.Width:=1;
   end;
 end;
+procedure TMainForm.UpdateViewport;
+var Fit,BaseX,BaseY,DPI: Double; W,H,L,T,KeepX,KeepY,Margin: Integer;
+begin
+  if (FCanvas=nil) or (Page=nil) then begin FPageRect:=TRect.Empty; FScale:=1; Exit; end;
+  if FViewportPageID<>Page.ID then begin
+    EndViewPan(False); FViewZoom:=1; FViewPan:=TPointF.Zero; FViewportPageID:=Page.ID;
+  end;
+  DPI:=CurrentPPI/96; Margin:=MulDiv(24,CurrentPPI,96);
+  Fit:=Min(Max(1,FCanvas.Width-2*Margin)/FProject.Width,Max(1,FCanvas.Height-2*Margin)/FProject.Height);
+  FViewZoom:=EnsureRange(FViewZoom,0.1,16.0);
+  W:=Max(1,Round(FProject.Width*Fit*FViewZoom)); FScale:=W/FProject.Width;
+  H:=Max(1,Round(FProject.Height*FScale));
+  BaseX:=(FCanvas.Width-W)/2; BaseY:=Margin;
+  KeepX:=Max(1,Min(MulDiv(32,CurrentPPI,96),Min(W,FCanvas.Width)));
+  KeepY:=Max(1,Min(MulDiv(32,CurrentPPI,96),Min(H,FCanvas.Height)));
+  L:=EnsureRange(Round(BaseX+FViewPan.X*DPI),-W+KeepX,Max(-W+KeepX,FCanvas.Width-KeepX));
+  T:=EnsureRange(Round(BaseY+FViewPan.Y*DPI),-H+KeepY,Max(-H+KeepY,FCanvas.Height-KeepY));
+  FViewPan:=TPointF.Create((L-BaseX)/DPI,(T-BaseY)/DPI);
+  FPageRect:=Rect(L,T,L+W,T+H);
+end;
+procedure TMainForm.ResetViewport;
+begin
+  EndViewPan(False); FViewZoom:=1; FViewPan:=TPointF.Zero; FViewportPageID:='';
+  FScale:=1; FPageRect:=TRect.Empty;
+  if FCanvas<>nil then FCanvas.Invalidate;
+end;
+procedure TMainForm.BeginViewPan(Button: TMouseButton; X,Y: Integer);
+begin
+  if FDragging or FViewPanning then Exit;
+  ActiveControl:=FView; UpdateViewport;
+  FViewPanStart:=FViewPan; FViewPanMouse:=Point(X,Y); FViewPanButton:=Button;
+  FViewPanning:=True; FViewPanMoved:=False; FCanvas.Cursor:=crSizeAll;
+  if not FTesting then FCanvas.MouseCapture:=True;
+end;
+procedure TMainForm.EndViewPan(Cancel: Boolean);
+begin
+  if not FViewPanning then Exit;
+  FViewPanning:=False;
+  if Cancel then FViewPan:=FViewPanStart;
+  FCanvas.Cursor:=crDefault; FCanvas.MouseCapture:=False;
+  UpdateViewport; FCanvas.Invalidate;
+end;
+procedure TMainForm.ViewCaptureLost(Sender: TObject);
+begin
+  if FViewPanning then EndViewPan(False);
+  if FDragging then CancelDrag;
+end;
+procedure TMainForm.ViewWheel(Sender: TObject; Shift: TShiftState; WheelDelta: Integer; MousePos: TPoint; var Handled: Boolean);
+var P: TPoint; Anchor: TPointF; Zoom,DPI: Double;
+begin
+  if (Page=nil) or (FCanvas=nil) then Exit;
+  P:=FCanvas.ScreenToClient(MousePos);
+  if not FCanvas.ClientRect.Contains(P) then Exit;
+  Handled:=True;
+  // A held edit/pan keeps its original coordinate frame until released.
+  if FDragging or FViewPanning or (WheelDelta=0) then Exit;
+  UpdateViewport; Anchor:=ToPage(P.X,P.Y);
+  Zoom:=EnsureRange(FViewZoom*Power(1.15,EnsureRange(WheelDelta/120.0,-32.0,32.0)),0.1,16.0);
+  if SameValue(Zoom,FViewZoom,1E-9) then Exit;
+  FViewZoom:=Zoom; UpdateViewport; DPI:=CurrentPPI/96;
+  FViewPan.Offset((P.X-FPageRect.Left-Anchor.X*FScale)/DPI,(P.Y-FPageRect.Top-Anchor.Y*FScale)/DPI);
+  UpdateViewport; FCanvas.Invalidate;
+  FStatus.SimpleText:=Format('表示 %.0f%% | ホイール: 拡大縮小 / 中央ドラッグ・空白の左ドラッグ: 移動 / Ctrl+0: 全体表示',[FScale*100]);
+end;
+function TMainForm.EmptyViewPoint(const P: TPointF): Boolean;
+var Balloon: TComicBalloon; Tail: TComicTail; G: HRGN; R: TRectF; Point: TPointF; Overlay: TComicOverlay;
+begin
+  Result:=False;
+  if not (FTool in [0,12,13]) then Exit;
+  if (HitPanel(P)>=0) or (HitBalloon(P)>=0) then Exit;
+  for Balloon in Page.Balloons do begin
+    if FRenderer.BalloonTextBounds(Balloon).Contains(P) then Exit;
+    for Tail in Balloon.Tails do begin
+      G:=TailRegion(Tail,System.Types.Point(0,0),1);
+      try if PtInRegion(G,Round(P.X),Round(P.Y)) then Exit; finally Winapi.Windows.DeleteObject(G); end;
+    end;
+  end;
+  if (FPanelIndex>=0) and (FPanelIndex<Page.Panels.Count) then begin
+    R:=Page.Panels[FPanelIndex].Bounds;
+    if FTabs.ActivePageIndex=1 then begin
+      R:=SelectedPanelBounds;
+      if (Length(SelectedPanelIDs)>1) and R.Contains(P) then Exit;
+      if (Length(SelectedPanelIDs)<=1) and (HitVertex(Page.Panels[FPanelIndex],P)>=0) then Exit;
+    end;
+    if FTabs.ActivePageIndex=2 then R:=FRenderer.ImageBounds(FProject,Page.Panels[FPanelIndex]);
+    if HitHandle(R,P,9/FScale)<>0 then Exit;
+  end;
+  if (FBalloonIndex>=0) and (FBalloonIndex<Page.Balloons.Count) and (FTabs.ActivePageIndex=3) then begin
+    Balloon:=Page.Balloons[FBalloonIndex]; R:=Balloon.Bounds;
+    if FTool=13 then R:=FRenderer.BalloonTextBounds(Balloon);
+    if HitHandle(R,P,9/FScale)<>0 then Exit;
+    if (FTool=12) and (FTailIndex>=0) and (FTailIndex<Balloon.Tails.Count) then
+      for Point in Balloon.Tails[FTailIndex].Handles do
+        if Hypot(Point.X-P.X,Point.Y-P.Y)*FScale<=MulDiv(12,CurrentPPI,96) then Exit;
+  end;
+  if FTabs.ActivePageIndex=4 then begin
+    Overlay:=SelectedEffect;
+    if (FEffectCategory.ItemIndex=0) and (Overlay<>nil) and
+      (HitHandle(OverlayBounds(Page.Panels[FPanelIndex],Overlay),P,9/FScale)<>0) then Exit;
+  end;
+  Result:=True;
+end;
+
 function TMainForm.ToPage(X,Y: Integer): TPointF;
-begin Result:=TPointF.Create((X-FPageRect.Left)/FScale,(Y-FPageRect.Top)/FScale); end;
+begin UpdateViewport; Result:=TPointF.Create((X-FPageRect.Left)/FScale,(Y-FPageRect.Top)/FScale); end;
 function TMainForm.HitPanel(const P: TPointF): Integer;
 var I: Integer; G: HRGN; R: TRectF;
 begin
@@ -1635,12 +1798,13 @@ begin
   for I:=Page.Balloons.Count-1 downto 0 do begin
     R:=Page.Balloons[I].Bounds; if not R.Contains(P) then Continue;
     if Page.Balloons[I].Transparent then Exit(I);
-    G:=ShapeRegion(Rect(Round(R.Left),Round(R.Top),Round(R.Right),Round(R.Bottom)),Page.Balloons[I].Shape);
+    G:=BalloonBodyRegion(Page.Balloons[I],Point(0,0),1);
     try if PtInRegion(G,Round(P.X),Round(P.Y)) then Exit(I); finally Winapi.Windows.DeleteObject(G); end;
   end;
 end;
 procedure TMainForm.CancelDrag;
 begin
+  EndViewPan(True);
   if not FDragging then Exit;
   FDragging:=False; FCanvas.MouseCapture:=False;
   FDragVertex:=-1;
@@ -1699,7 +1863,9 @@ begin
   // VCL dispatches DblClick before its trailing MouseDown(ssDouble).
   // Do not restart a drag or steal the text editor's focus after that event.
   if ssDouble in Shift then Exit;
-  if (Page=nil) or not HasCharacter then Exit;
+  if Page=nil then Exit;
+  if Button=mbMiddle then begin BeginViewPan(Button,X,Y); Exit; end;
+  if FViewPanning then Exit;
   if (Button=mbRight) and (FTool=0) and (FTabs.ActivePageIndex=1) then begin
     if Length(SelectedPanelIDs)>1 then begin FStatus.SimpleText:='頂点を編集するコマを1つ選択してください。'; Exit; end;
     CancelDrag; EditVertexContext(ToPage(X,Y)); Exit;
@@ -1710,6 +1876,8 @@ begin
     FCanvas.Invalidate; FStatus.SimpleText:='直前の指定へ戻りました。Escで全体を中止できます。'; Exit;
   end;
   if Button<>mbLeft then Exit; P:=ToPage(X,Y);
+  FDragMouse:=Point(X,Y);
+  if not FDragging and not (ssCtrl in Shift) and EmptyViewPoint(P) then begin BeginViewPan(Button,X,Y); Exit; end;
   ActiveControl:=FView;
   if FTabs.ActivePageIndex=4 then begin
     Overlay:=SelectedEffect; Handle:=0; R:=TRectF.Empty;
@@ -1767,7 +1935,8 @@ begin
     if (R.Width<30) or (R.Height<30) then Exit; Checkpoint; FFirst:=False;
     if FTool<5 then begin Panel:=TComicPanel.Create; Panel.Bounds:=R; Panel.Shape:=FTool-1; Panel.Number:=Page.Panels.Count+1;
       Page.Panels.Add(Panel); SelectSinglePanel(Page.Panels.Count-1); end
-    else begin Balloon:=TComicBalloon.Create; Balloon.Bounds:=R; if FTool=10 then Balloon.Shape:=0 else Balloon.Shape:=FTool-4;
+    else begin Balloon:=TComicBalloon.Create; Balloon.Bounds:=R; Balloon.Contour:=TComicBalloonContour(Max(0,FContour.ItemIndex));
+      if FTool=10 then Balloon.Shape:=0 else Balloon.Shape:=FTool-4;
       FPanelIndex:=HitPanel(FStart); if FPanelIndex>=0 then Balloon.PanelID:=Page.Panels[FPanelIndex].ID;
       Page.Balloons.Add(Balloon); FBalloonIndex:=Page.Balloons.Count-1; LoadBalloonControls(Balloon); end;
     Changed; Exit;
@@ -1811,6 +1980,15 @@ var P,Delta,Q: TPointF; R,Actual: TRectF; Panel: TComicPanel; Candidate: TArray<
   TextLayoutSize: TSizeF; TextLayoutFontSize: Integer;
   Tail,Probe: TComicTail; TailLength: Double; Overlay: TComicOverlay;
 begin
+  if FViewPanning then begin
+    if (Page=nil) or ((FViewPanButton=mbMiddle) and not (ssMiddle in Shift)) or
+      ((FViewPanButton=mbLeft) and not (ssLeft in Shift)) then begin EndViewPan(False); Exit; end;
+    if not FViewPanMoved and (Abs(X-FViewPanMouse.X)+Abs(Y-FViewPanMouse.Y)<MulDiv(3,CurrentPPI,96)) then Exit;
+    FViewPanMoved:=True;
+    FViewPan:=TPointF.Create(FViewPanStart.X+(X-FViewPanMouse.X)*96/CurrentPPI,
+      FViewPanStart.Y+(Y-FViewPanMouse.Y)*96/CurrentPPI);
+    UpdateViewport; FCanvas.Invalidate; Exit;
+  end;
   if Page=nil then Exit; P:=ToPage(X,Y);
   if not FDragging then begin
     if FFirst or (FGeometryPoints.Count>0) or (FSplitStage>0) then begin
@@ -1821,7 +1999,9 @@ begin
   end;
   if not (ssLeft in Shift) then begin CancelDrag; Exit; end;
   Delta:=TPointF.Create(P.X-FStart.X,P.Y-FStart.Y);
-  if not FDragMoved and (Abs(Delta.X)*FScale<1) and (Abs(Delta.Y)*FScale<1) then Exit;
+  // Use integer screen displacement for the one-pixel threshold. Converting
+  // a one-pixel move through Single page coordinates can round below 1.0.
+  if not FDragMoved and (X=FDragMouse.X) and (Y=FDragMouse.Y) then Exit;
   FDragMoved:=True; R:=FDragBounds;
   if FTabs.ActivePageIndex=4 then begin
     Overlay:=SelectedEffect; if Overlay=nil then Exit; Panel:=Page.Panels[FPanelIndex];
@@ -1875,6 +2055,7 @@ begin
   end;
   if Length(FDragGroup)>1 then begin
     if FDragHandle<>0 then R:=ResizePanelGroup(FDragGroup,FDragBounds,Delta,FDragHandle) else R.Offset(Delta.X,Delta.Y);
+    if not (ssAlt in Shift) then R:=SnapPanelDragBounds(R);
     if not ApplyPanelGroupTransform(Page,FDragGroup,FDragBounds,R) then begin
       FStatus.SimpleText:='複数選択の変形で無効なコマが生じるため、直前の有効形状を維持します。'; Exit;
     end;
@@ -1898,6 +2079,7 @@ begin
   end else begin
     if FDragHandle<>0 then R:=ResizeRect(FDragBounds,Delta,FDragHandle,30)
     else R.Offset(Delta.X,Delta.Y);
+    if (FTabs.ActivePageIndex=1) and (FBalloonIndex<0) and (FPanelIndex>=0) and not (ssAlt in Shift) then R:=SnapPanelDragBounds(R);
     if FBalloonIndex>=0 then begin
       if not Page.Balloons[FBalloonIndex].ApplyTransform(FDragBalloonTransform,R) then begin
         FStatus.SimpleText:='本体としっぽの有効な形状を維持できない変形は確定できません。'; Exit;
@@ -1920,6 +2102,15 @@ begin
 end;
 procedure TMainForm.MouseUp(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X,Y: Integer);
 begin
+  if FViewPanning then begin
+    if Button<>FViewPanButton then Exit;
+    EndViewPan(False);
+    if (Button=mbLeft) and not FViewPanMoved and (FTool=0) and FPageRect.Contains(Point(X,Y)) then begin
+      FSelectedPanels.Clear; FPanelIndex:=-1; FBalloonIndex:=-1; FEffectIndex:=-1;
+      UpdateIconState; FCanvas.Invalidate;
+    end;
+    Exit;
+  end;
   if not FDragging or (Button<>mbLeft) then Exit;
   FDragging:=False; FCanvas.MouseCapture:=False;
   if FDragMoved and (FProject.Snapshot<>FDragSnapshot) then begin
@@ -1985,6 +2176,7 @@ begin
   if FFontUnderline.Checked then Include(B.FontStyle,fsUnderline); if FFontStrikeOut.Checked then Include(B.FontStyle,fsStrikeOut);
   if (B.Text<>OldText) or (B.FontFamily<>OldFamily) or (B.Vertical<>OldVertical) or (B.FontStyle<>OldStyle) then B.ResetTextLayout;
   B.FillColor:=FFillColor; B.BorderColor:=FBorderColor; B.BorderWidth:=StrToFloatDef(FBorderWidth.Text,3);
+  B.Contour:=TComicBalloonContour(Max(0,FContour.ItemIndex));
   Changed;
   if FFontHistoryWritable then
     try FFontHistory.Remember(B.FontFamily,TPath.Combine(DataRoot,'Presets\FontHistory.json'));
@@ -1994,6 +2186,7 @@ procedure TMainForm.LoadBalloonControls(Balloon: TComicBalloon);
 var Index: Integer;
 begin
   FText.Text:=Balloon.Text; FVertical.Checked:=Balloon.Vertical; FTransparent.Checked:=Balloon.Transparent; FOverflow.Checked:=Balloon.Overflow;
+  FContour.ItemIndex:=Ord(Balloon.Contour);
   Index:=FFont.Items.IndexOf(IntToStr(Balloon.FontSize)); if Index<0 then Index:=FFont.Items.Add(IntToStr(Balloon.FontSize)); FFont.ItemIndex:=Index;
   Index:=FFontFamily.Items.IndexOf(Balloon.FontFamily); if Index<0 then Index:=FFontFamily.Items.Add(Balloon.FontFamily); FFontFamily.ItemIndex:=Index;
   FTextColor:=Balloon.FontColor; FFontBold.Checked:=fsBold in Balloon.FontStyle; FFontItalic.Checked:=fsItalic in Balloon.FontStyle;
@@ -2055,9 +2248,9 @@ begin
   UpdateIconState; FCanvas.Invalidate;
 end;
 function TMainForm.InsideBalloonBody(Balloon: TComicBalloon; const P: TPointF): Boolean;
-var Region: HRGN; R: TRectF;
+var Region: HRGN;
 begin
-  R:=Balloon.Bounds; Region:=ShapeRegion(Rect(Round(R.Left),Round(R.Top),Round(R.Right),Round(R.Bottom)),Balloon.Shape);
+  Region:=BalloonBodyRegion(Balloon,Point(0,0),1);
   try Result:=PtInRegion(Region,Round(P.X),Round(P.Y)); finally Winapi.Windows.DeleteObject(Region); end;
 end;
 procedure TMainForm.TailClick(const P: TPointF);
@@ -2094,6 +2287,7 @@ begin
   end;
   Tail:=Balloon.Tails[FTailIndex]; FDragTailState.Root:=Tail.Root; FDragTailState.Tip:=Tail.Tip; FDragTailState.Width:=Tail.Width;
   FStart:=P; FLast:=P; FDragSnapshot:=FProject.Snapshot; FDragMoved:=False; FDragging:=True; FDragHandle:=0;
+  FDragMouse:=Point(FPageRect.Left+Round(P.X*FScale),FPageRect.Top+Round(P.Y*FScale));
   if not FTesting then FCanvas.MouseCapture:=True;
   UpdateIconState; FCanvas.Invalidate;
 end;
@@ -2104,17 +2298,30 @@ begin
   if FTailIndex<0 then FTool:=0; Changed;
 end;
 function TMainForm.CreateExportOptions: TComicExportDialog;
-begin CancelDrag; Result:=TComicExportDialog.CreateOptions(Self,TPath.Combine(FProject.Folder,'Output'),OpenOutput); end;
+var Page: TComicPage; Panel: TComicPanel; IDs: TDictionary<string,Boolean>; Missing,Duplicate: Integer; Warnings: string;
+begin
+  CancelDrag; Missing:=0; Duplicate:=0; Warnings:=''; IDs:=TDictionary<string,Boolean>.Create;
+  try
+    for Page in FProject.Pages do for Panel in Page.Panels do begin
+      if (Panel.ImageID='') or not FileExists(FProject.ImagePath(Panel.ImageID)) then Inc(Missing);
+      if Panel.ImageID<>'' then
+        if IDs.ContainsKey(Panel.ImageID) then Inc(Duplicate) else IDs.Add(Panel.ImageID,True);
+    end;
+  finally IDs.Free; end;
+  if Missing>0 then Warnings:=Format('画像未配置・参照切れ：%d コマ。画像のない部分も含めて出力します。',[Missing]);
+  if Duplicate>0 then begin
+    if Warnings<>'' then Warnings:=Warnings+sLineBreak;
+    Warnings:=Warnings+Format('同じ画像の重複配置：%d コマ。重複したまま出力します。',[Duplicate]);
+  end;
+  Result:=TComicExportDialog.CreateOptions(Self,TPath.Combine(FProject.Folder,'Output'),OpenOutput,Warnings);
+end;
 procedure TMainForm.Notify(const Message: string);
 begin if FTesting then raise Exception.Create(Message) else ShowMessage(Message); end;
 procedure TMainForm.ExportPNG(Sender: TObject);
-var All: Boolean; N,Missing: Integer; P: TComicPage; Panel: TComicPanel;
-  Output: string; D: TComicExportDialog;
+var All: Boolean; N: Integer; Output: string; D: TComicExportDialog;
 begin
   CancelDrag;
-  if not NeedProject then Exit; Missing:=0;
-  for P in FProject.Pages do for Panel in P.Panels do if (Panel.ImageID='') or not FileExists(FProject.ImagePath(Panel.ImageID)) then Inc(Missing);
-  if (Missing>0) and (MessageDlg(Format('画像未配置／参照切れのコマが %d 個あります。出力しますか？',[Missing]),mtWarning,[mbYes,mbNo],0)<>mrYes) then Exit;
+  if not NeedProject then Exit;
   Output:=TPath.Combine(FProject.Folder,'Output'); ForceDirectories(Output);
   D:=CreateExportOptions;
   try
@@ -2145,6 +2352,9 @@ begin
       FPanelIndex:=Page.Panels.Count-1; FBalloonIndex:=-1; FTool:=0; FFirst:=False; ResetGeometryInput;
       UpdateIconState; FCanvas.Invalidate; Key:=0; Exit;
     end;
+  end;
+  if (ssCtrl in Shift) and (Key in [Ord('0'),VK_NUMPAD0]) and (FProject<>nil) then begin
+    CancelDrag; ResetViewport; Key:=0; Exit;
   end;
   if ActiveControl=FText then Exit;
   if (Key=VK_DELETE) and (ActiveControl=FView) and (FTabs.ActivePageIndex=1) then begin DeleteObject(nil); Key:=0; Exit; end;
@@ -2648,6 +2858,250 @@ var B: TBitmap; A,A2: TComicAsset; P: TComicPanel; Balloon: TComicBalloon;
       Check(FProject.Snapshot=Original,'gap snap fixtures preserve the active project');
     finally Probe.Free; end;
   end;
+  procedure PanelTransformSnapChecks;
+  var Probe: TMainForm; Project,Reloaded: TComicProject; Panels: TObjectList<TComicPanel>; Panel: TComicPanel;
+    Frame,Bounds,Target,Expected,OriginalBounds,OtherBounds: TRectF; IDs: TArray<string>;
+    Before,After,Original,MovingID,ImageID: string; X,Y,TX,TY,K,PPI,History: Integer;
+    PointA,Delta: TPointF; KeyValue: Word; PNG: TPngImage;
+    procedure Add(L,T,R,B: Single);
+    begin Panel:=TComicPanel.Create; Panel.Bounds:=TRectF.Create(L,T,R,B); Panels.Add(Panel); end;
+    procedure Reverse;
+    var I: Integer;
+    begin for I:=0 to Panels.Count div 2-1 do Panels.Exchange(I,Panels.Count-1-I); end;
+    procedure PaintProbe;
+    begin Probe.HandleNeeded; B.SetSize(Probe.ClientWidth,Probe.ClientHeight); Probe.PaintTo(B.Canvas,0,0); end;
+    procedure StartPanelDrag(Index,Handle: Integer);
+    begin
+      Probe.FTool:=0; Probe.SelectSinglePanel(Index); PaintProbe; OriginalBounds:=Probe.Page.Panels[Index].Bounds;
+      if Handle=0 then PointA:=OriginalBounds.CenterPoint else PointA:=EditHandles(OriginalBounds)[Handle-1];
+      X:=Probe.FPageRect.Left+Round(PointA.X*Probe.FScale); Y:=Probe.FPageRect.Top+Round(PointA.Y*Probe.FScale);
+      Probe.FCanvas.Perform(WM_LBUTTONDOWN,MK_LBUTTON,MakeLParam(X,Y));
+      Check(Probe.FDragging and (Probe.FDragHandle=Handle) and (Probe.FDragVertex=-1),'panel snap starts the requested whole-object handle '+IntToStr(Handle));
+    end;
+    procedure MoveTo(const P: TPointF; Alt: Boolean=False);
+    var Flags: Integer;
+    begin
+      TX:=Probe.FPageRect.Left+Round(P.X*Probe.FScale); TY:=Probe.FPageRect.Top+Round(P.Y*Probe.FScale);
+      Flags:=MK_LBUTTON;
+      // MouseMove receives VCL Alt state directly; no global keyboard or focus changes.
+      if Alt then Probe.MouseMove(Probe.FCanvas,[ssLeft,ssAlt],TX,TY)
+      else Probe.FCanvas.Perform(WM_MOUSEMOVE,Flags,MakeLParam(TX,TY));
+    end;
+    procedure Finish;
+    begin Probe.FCanvas.Perform(WM_LBUTTONUP,0,MakeLParam(TX,TY)); end;
+  begin
+    Original:=FProject.Snapshot; Panels:=TObjectList<TComicPanel>.Create;
+    Probe:=TMainForm.Create(nil); PNG:=TPngImage.Create;
+    try
+      Frame:=TRectF.Create(60,60,1140,1640); Bounds:=TRectF.Create(62,63,1137,1638);
+      for K:=1 to 8 do begin
+        Target:=SnapPanelBounds(Panels,Bounds,Frame,8,K,nil,30,30); Expected:=Bounds;
+        if K in [1,7,8] then Expected.Left:=60; if K in [3,4,5] then Expected.Right:=1140;
+        if K in [1,2,3] then Expected.Top:=60; if K in [5,6,7] then Expected.Bottom:=1640;
+        Check(Target=Expected,'frame resize snaps only active edges and keeps opposite anchors '+IntToStr(K));
+      end;
+      Bounds:=TRectF.Create(62,63,262,313); Target:=SnapPanelBounds(Panels,Bounds,Frame,8,0,nil,30,30);
+      Check((Target.Left=60) and (Target.Top=60) and (Target.Width=200) and (Target.Height=250),'whole-panel frame movement preserves size on both axes');
+      Bounds:=TRectF.Create(-200,-200,-100,-100); Check(SnapPanelBounds(Panels,Bounds,Frame,8,0,nil,30,30)=Bounds,'snapping leaves deliberate frame overflow unrestricted');
+      Bounds:=TRectF.Create(112,300,142,500); Check(SnapPanelBounds(Panels,Bounds,TRectF.Create(115,60,1140,1640),8,8,nil,30,30)=Bounds,
+        'resize snap cannot cross the minimum panel width');
+      Add(100,100,300,350); Add(320,100,520,350); Add(700,100,900,350); IDs:=[Panels[2].ID];
+      Bounds:=TRectF.Create(538,100,738,350); Target:=SnapPanelBounds(Panels,Bounds,Frame,8,0,IDs,30,30);
+      Check((Target.Left=540) and (Target.Width=200) and (Target.Top=100),'whole-panel move repeats a twenty-pixel stationary gap');
+      Reverse; Check(SnapPanelBounds(Panels,Bounds,Frame,8,0,IDs,30,30)=Target,'move snap target is independent of panel iteration order'); Reverse;
+      Bounds:=TRectF.Create(538,700,738,950); Check(SnapPanelBounds(Panels,Bounds,Frame,8,0,IDs,30,30)=Bounds,'repeated gap requires overlapping neighbour spans');
+      Bounds:=TRectF.Create(521,100,721,350); Target:=SnapPanelBounds(Panels,Bounds,Frame,1,0,IDs,30,30);
+      Check(Target.Left=520,'alignment remains reachable exactly at the snap tolerance');
+      Bounds.Left:=521.1; Bounds.Right:=721.1; Check(SnapPanelBounds(Panels,Bounds,Frame,1,0,IDs,30,30)=Bounds,'movement outside the tolerance preserves exact coordinates');
+      Bounds:=TRectF.Create(101,101,901,351); IDs:=[Panels[0].ID,Panels[1].ID,Panels[2].ID];
+      Check(SnapPanelBounds(Panels,Bounds,Frame,8,0,IDs,30,30)=Bounds,'every selected member is excluded from alignment and gap measurement');
+      Panels.Clear; Add(100,100,120,200); Add(120,300,140,400); Bounds:=TRectF.Create(110,600,180,800);
+      Target:=SnapPanelBounds(Panels,Bounds,Frame,10,0,nil,30,30); Reverse;
+      Check((Target.Left=100) and (SnapPanelBounds(Panels,Bounds,Frame,10,0,nil,30,30)=Target),'equidistant alignment uses a fixed coordinate tie break');
+      Panels.Clear; Add(100,100,300,350); Add(100,380,300,630);
+      Bounds:=TRectF.Create(100,658,300,908); Target:=SnapPanelBounds(Panels,Bounds,Frame,8,0,nil,30,30);
+      Check((Target.Top=660) and (Target.Height=250),'whole-panel movement repeats a vertical stationary gap');
+      Bounds:=TRectF.Create(100,700,300,900); Target:=SnapPanelBounds(Panels,Bounds,Frame,50,2,nil,30,30);
+      Check((Target.Top=660) and (Target.Bottom=900),'top resize repeats a gap while retaining the opposite edge');
+      Panels.Clear; Add(100,100,300,300); Panel.SetVertices([TPointF.Create(100,100),TPointF.Create(220,100),TPointF.Create(300,300)]);
+      Bounds:=TRectF.Create(222,600,422,800); Target:=SnapPanelBounds(Panels,Bounds,Frame,8,0,nil,30,30);
+      Check(Target.Left=220,'polygon corner axes remain available to whole-panel movement');
+      Project:=TComicProject.Create; Project.Initialize('コマ全体スナップ fixture','1'); Probe.AdoptProject(Project,False);
+      ImageID:=Project.ImportImage(TPath.Combine(Folder,'reference.bmp'),'').ID;
+      Panels.Free; Panels:=nil;
+      Panel:=TComicPanel.Create; Panel.Bounds:=TRectF.Create(100,100,300,350); Probe.Page.Panels.Add(Panel);
+      Panel:=TComicPanel.Create; Panel.Bounds:=TRectF.Create(320,100,520,350); Probe.Page.Panels.Add(Panel);
+      Panel:=TComicPanel.Create; Panel.Bounds:=TRectF.Create(700,100,900,350); Panel.ImageID:=ImageID; MovingID:=Panel.ID; Probe.Page.Panels.Add(Panel);
+      Probe.RefreshUI; Probe.FTabs.ActivePageIndex:=1; Probe.TabChanged(nil); Probe.FSnap.Checked:=True;
+      Before:=Project.Snapshot;
+      for PPI in [96,144] do begin
+        Probe.Scaled:=True; Probe.ScaleForPPI(PPI); Probe.Scaled:=False; Probe.Width:=MulDiv(940,PPI,96); Probe.Height:=MulDiv(660,PPI,96); Probe.Realign;
+        Probe.FUndo.Clear; Probe.FRedo.Clear; StartPanelDrag(2,0); History:=Probe.FUndo.Count;
+        MoveTo(TPointF.Create(PointA.X-162,PointA.Y)); Finish;
+        Check((Probe.Page.Panels[2].Bounds.Left=540) and (Probe.Page.Panels[2].Bounds.Width=200) and
+          (Probe.Page.Panels[2].ID=MovingID) and (Probe.Page.Panels[2].ImageID=ImageID) and (Probe.FUndo.Count=History+1),
+          'VCL panel movement snaps to repeated gap and commits once at PPI '+IntToStr(PPI));
+        After:=Project.Snapshot; Project.Save; Reloaded:=TComicProject.Create;
+        try Reloaded.Load(TPath.Combine(Project.Folder,'Project.json')); Check(Reloaded.Snapshot=After,'snapped panel saves and reloads at PPI '+IntToStr(PPI)); finally Reloaded.Free; end;
+        Probe.Undo(nil); Check(Project.Snapshot=Before,'snapped movement undo restores exact source data '+IntToStr(PPI));
+        Probe.Redo(nil); Check(Project.Snapshot=After,'snapped movement redo restores all geometry '+IntToStr(PPI)); Probe.Undo(nil);
+        StartPanelDrag(2,0); MoveTo(TPointF.Create(PointA.X-162,PointA.Y),True); Finish;
+        Check(Abs(Probe.Page.Panels[2].Bounds.Left-540)>0.5,'Alt bypasses whole-panel movement snap '+IntToStr(PPI)); Probe.Undo(nil);
+        Probe.FSnap.Checked:=False; StartPanelDrag(2,0); MoveTo(TPointF.Create(PointA.X-162,PointA.Y)); Finish;
+        Check(Abs(Probe.Page.Panels[2].Bounds.Left-540)>0.5,'disabled checkbox bypasses whole-panel snap '+IntToStr(PPI)); Probe.Undo(nil); Probe.FSnap.Checked:=True;
+        StartPanelDrag(2,0); History:=Probe.FUndo.Count; MoveTo(TPointF.Create(PointA.X-162,PointA.Y)); KeyValue:=VK_ESCAPE; Probe.Key(Probe,KeyValue,[]);
+        Check((Project.Snapshot=Before) and (Probe.FUndo.Count=History) and not Probe.FDragging,'escape cancels snapped movement without an undo entry '+IntToStr(PPI));
+        // Repeated updates use the original mouse-down bounds, not the last snapped result.
+        StartPanelDrag(2,0); MoveTo(TPointF.Create(PointA.X-162,PointA.Y)); MoveTo(TPointF.Create(PointA.X-100,PointA.Y),True);
+        Delta:=Probe.ToPage(TX,TY)-Probe.FStart;
+        Check(Abs(Probe.Page.Panels[2].Bounds.Left-(OriginalBounds.Left+Delta.X))<0.001,'leaving a snap with Alt has no accumulated displacement '+IntToStr(PPI)); Probe.CancelDrag;
+      end;
+      Project.Restore(Before); Probe.RefreshUI; Probe.Page.Panels.Clear;
+      Panel:=TComicPanel.Create; Panel.Bounds:=TRectF.Create(200,200,1000,1400); Probe.Page.Panels.Add(Panel);
+      Before:=Project.Snapshot;
+      for PPI in [96,144] do begin
+        Probe.Scaled:=True; Probe.ScaleForPPI(PPI); Probe.Scaled:=False; Probe.Width:=MulDiv(940,PPI,96); Probe.Height:=MulDiv(660,PPI,96); Probe.Realign;
+        for K:=1 to 8 do begin
+          StartPanelDrag(0,K); Expected:=OriginalBounds;
+          if K in [1,7,8] then Expected.Left:=60; if K in [3,4,5] then Expected.Right:=1140;
+          if K in [1,2,3] then Expected.Top:=60; if K in [5,6,7] then Expected.Bottom:=1640;
+          PointA:=EditHandles(Expected)[K-1]; MoveTo(PointA); Finish;
+          Check((Probe.Page.Panels[0].Bounds=Expected) and (Probe.FUndo.Count=1),'all eight VCL resize handles snap active edges only '+IntToStr(K)+' PPI '+IntToStr(PPI));
+          Probe.Undo(nil); Check(Project.Snapshot=Before,'snapped handle restores exact data on undo '+IntToStr(K)+' PPI '+IntToStr(PPI));
+        end;
+      end;
+      Probe.Page.Panels[0].Bounds:=TRectF.Create(60,60,600,700); Before:=Project.Snapshot;
+      for PPI in [96,144] do begin
+        Probe.Scaled:=True; Probe.ScaleForPPI(PPI); Probe.Scaled:=False; Probe.Width:=MulDiv(940,PPI,96); Probe.Height:=MulDiv(660,PPI,96); Probe.Realign;
+        StartPanelDrag(0,0); TX:=X+MulDiv(2,PPI,96); TY:=Y+MulDiv(2,PPI,96);
+        Probe.FCanvas.Perform(WM_MOUSEMOVE,MK_LBUTTON,MakeLParam(TX,TY)); Finish;
+        Check((Project.Snapshot=Before) and (Probe.FUndo.Count=0),'small frame-aligned movement snaps back without a phantom undo '+IntToStr(PPI));
+      end;
+      // A mixed group uses its outer rectangle, preserving internal proportions and stationary panels.
+      Probe.Page.Panels.Clear; Panel:=TComicPanel.Create; Panel.Bounds:=TRectF.Create(100,200,300,400); Probe.Page.Panels.Add(Panel);
+      Panel:=TComicPanel.Create; Panel.SetVertices([TPointF.Create(350,200),TPointF.Create(550,200),TPointF.Create(550,400),TPointF.Create(350,400)]); Probe.Page.Panels.Add(Panel);
+      Panel:=TComicPanel.Create; Panel.Bounds:=TRectF.Create(700,200,900,400); Probe.Page.Panels.Add(Panel); OtherBounds:=Panel.Bounds;
+      Before:=Project.Snapshot; Probe.RefreshUI;
+      for PPI in [96,144] do begin
+        Probe.Scaled:=True; Probe.ScaleForPPI(PPI); Probe.Scaled:=False; Probe.Width:=MulDiv(940,PPI,96); Probe.Height:=MulDiv(660,PPI,96); Probe.Realign;
+        Probe.FSelectedPanels.Clear; Probe.FSelectedPanels.Add(Probe.Page.Panels[0].ID); Probe.FSelectedPanels.Add(Probe.Page.Panels[1].ID); Probe.FPanelIndex:=0; PaintProbe;
+        Bounds:=Probe.SelectedPanelBounds; PointA:=Bounds.CenterPoint; X:=Probe.FPageRect.Left+Round(PointA.X*Probe.FScale); Y:=Probe.FPageRect.Top+Round(PointA.Y*Probe.FScale);
+        Probe.FCanvas.Perform(WM_LBUTTONDOWN,MK_LBUTTON,MakeLParam(X,Y)); Check(Length(Probe.FDragGroup)=2,'group snap starts through the gap between selected members '+IntToStr(PPI));
+        MoveTo(TPointF.Create(PointA.X-38,PointA.Y)); Finish;
+        Check((Probe.SelectedPanelBounds.Left=60) and (Abs(Probe.SelectedPanelBounds.Width-450)<0.001) and (Probe.Page.Panels[2].Bounds=OtherBounds) and
+          ValidPolygon(Probe.Page.Panels[1].Vertices) and (Probe.FUndo.Count=1),'mixed-shape group snaps as one object and excludes both members '+IntToStr(PPI));
+        PaintProbe; PNG.Assign(B); PNG.SaveToFile(TPath.Combine(Folder,'panel-transform-snap-'+IntToStr(PPI)+'.png'));
+        Probe.Undo(nil); Check(Project.Snapshot=Before,'group frame snap cancels all member displacement in one undo '+IntToStr(PPI));
+        for K:=1 to 8 do begin
+          Probe.FSelectedPanels.Clear; Probe.FSelectedPanels.Add(Probe.Page.Panels[0].ID); Probe.FSelectedPanels.Add(Probe.Page.Panels[1].ID); Probe.FPanelIndex:=0; PaintProbe;
+          Bounds:=Probe.SelectedPanelBounds; Expected:=Bounds; PointA:=EditHandles(Bounds)[K-1];
+          X:=Probe.FPageRect.Left+Round(PointA.X*Probe.FScale); Y:=Probe.FPageRect.Top+Round(PointA.Y*Probe.FScale);
+          Probe.FCanvas.Perform(WM_LBUTTONDOWN,MK_LBUTTON,MakeLParam(X,Y));
+          Check((Length(Probe.FDragGroup)=2) and (Probe.FDragHandle=K),'group snap selects outer resize handle '+IntToStr(K)+' PPI '+IntToStr(PPI));
+          if K in [1,7,8] then Expected.Left:=60; if K in [3,4,5] then Expected.Right:=1140;
+          if K in [1,2,3] then Expected.Top:=60; if K in [5,6,7] then Expected.Bottom:=1640;
+          MoveTo(EditHandles(Expected)[K-1]); Finish; Target:=Probe.SelectedPanelBounds;
+          Check((Abs(Target.Left-Expected.Left)<0.001) and (Abs(Target.Top-Expected.Top)<0.001) and
+            (Abs(Target.Right-Expected.Right)<0.001) and (Abs(Target.Bottom-Expected.Bottom)<0.001) and
+            (Probe.Page.Panels[2].Bounds=OtherBounds) and ValidPolygon(Probe.Page.Panels[1].Vertices) and (Probe.FUndo.Count=1),
+            'mixed-shape group resize snaps active edges and preserves stationary geometry '+IntToStr(K)+' PPI '+IntToStr(PPI));
+          Probe.Undo(nil); Check(Project.Snapshot=Before,'group snapped resize undo restores all proportions '+IntToStr(K)+' PPI '+IntToStr(PPI));
+        end;
+        Probe.FSelectedPanels.Clear; Probe.FSelectedPanels.Add(Probe.Page.Panels[0].ID); Probe.FSelectedPanels.Add(Probe.Page.Panels[1].ID); Probe.FPanelIndex:=0; PaintProbe;
+        Bounds:=Probe.SelectedPanelBounds; PointA:=EditHandles(Bounds)[4]; X:=Probe.FPageRect.Left+Round(PointA.X*Probe.FScale); Y:=Probe.FPageRect.Top+Round(PointA.Y*Probe.FScale);
+        Probe.FCanvas.Perform(WM_LBUTTONDOWN,MK_LBUTTON,MakeLParam(X,Y)); MoveTo(TPointF.Create(1138,1638)); KeyValue:=VK_ESCAPE; Probe.Key(Probe,KeyValue,[]);
+        Check((Project.Snapshot=Before) and (Probe.FUndo.Count=0) and not Probe.FDragging,'escape cancels an entire snapped group resize '+IntToStr(PPI));
+        // Selected members cannot attract their own original edge during a short group move.
+        Probe.FSelectedPanels.Clear; Probe.FSelectedPanels.Add(Probe.Page.Panels[0].ID); Probe.FSelectedPanels.Add(Probe.Page.Panels[1].ID); Probe.FPanelIndex:=0; PaintProbe;
+        Bounds:=Probe.SelectedPanelBounds; PointA:=Bounds.CenterPoint; X:=Probe.FPageRect.Left+Round(PointA.X*Probe.FScale); Y:=Probe.FPageRect.Top+Round(PointA.Y*Probe.FScale);
+        Probe.FCanvas.Perform(WM_LBUTTONDOWN,MK_LBUTTON,MakeLParam(X,Y)); MoveTo(TPointF.Create(PointA.X+5,PointA.Y));
+        Check(Probe.SelectedPanelBounds.Left>101,Format('short group movement does not stick to a selected member %d [drag=%s pan=%s group=%d handle=%d scale=%.6f left=%.3f start=%.3f last=%.3f]',[PPI,BoolToStr(Probe.FDragging,True),BoolToStr(Probe.FViewPanning,True),Length(Probe.FDragGroup),Probe.FDragHandle,Probe.FScale,Probe.SelectedPanelBounds.Left,Probe.FStart.X,Probe.FLast.X])); Probe.CancelDrag;
+        for K:=0 to 1 do begin
+          Probe.FSelectedPanels.Clear; Probe.FSelectedPanels.Add(Probe.Page.Panels[0].ID); Probe.FSelectedPanels.Add(Probe.Page.Panels[1].ID); Probe.FPanelIndex:=0; PaintProbe;
+          Bounds:=Probe.SelectedPanelBounds; PointA:=EditHandles(Bounds)[4]; X:=Probe.FPageRect.Left+Round(PointA.X*Probe.FScale); Y:=Probe.FPageRect.Top+Round(PointA.Y*Probe.FScale);
+          Probe.FSnap.Checked:=K=0; Probe.FCanvas.Perform(WM_LBUTTONDOWN,MK_LBUTTON,MakeLParam(X,Y)); MoveTo(TPointF.Create(1136,1636),K=0); Finish;
+          Check((Abs(Probe.Page.Panels[1].Bounds.Right-1140)>0.5) and (Abs(Probe.Page.Panels[1].Bounds.Bottom-1640)>0.5),
+            'group resize bypasses snapping through Alt or setting '+IntToStr(K)+' PPI '+IntToStr(PPI)); Probe.Undo(nil); Probe.FSnap.Checked:=True;
+        end;
+      end;
+      Check(FProject.Snapshot=Original,'panel transform snap fixtures preserve the active project');
+    finally Panels.Free; PNG.Free; Probe.Free; end;
+  end;
+  procedure ExportReviewChecks;
+  var Probe: TMainForm; Project: TComicProject; Panel: TComicPanel; D: TComicExportDialog;
+    ImageID,Before,Original,Output: string; PPI,I,Kind,X,Y,History: Integer; All: Boolean;
+    PointA: TPointF; PNG: TPngImage; Control: TControl; LabelControl: TLabel; Radio: TRadioGroup;
+    procedure AddPanel(PageIndex: Integer; const ID: string; const Bounds: TRectF);
+    begin Panel:=TComicPanel.Create; Panel.Bounds:=Bounds; Panel.ImageID:=ID; Project.Pages[PageIndex].Panels.Add(Panel); end;
+    procedure CheckLayout(const Name: string);
+    var Margin,I,J,RadioCount: Integer;
+    begin
+      D.HandleNeeded; D.Scaled:=True; D.ScaleForPPI(PPI); D.Scaled:=False;
+      D.ClientWidth:=MulDiv(600,PPI,96); if D.WarningText='' then D.ClientHeight:=MulDiv(246,PPI,96) else D.ClientHeight:=MulDiv(340,PPI,96);
+      D.Realign; B.SetSize(D.ClientWidth,D.ClientHeight); D.PaintTo(B.Canvas,0,0);
+      PNG.Assign(B); PNG.SaveToFile(TPath.Combine(Folder,Name+'-'+IntToStr(PPI)+'.png'));
+      RadioCount:=0; Margin:=MulDiv(8,PPI,96);
+      for I:=0 to D.ComponentCount-1 do if D.Components[I] is TControl then begin
+        Control:=TControl(D.Components[I]); if not Control.Visible then Continue;
+        Check((Control.Left>=0) and (Control.Top>=0) and (Control.Left+Control.Width<=D.ClientWidth) and
+          (Control.Top+Control.Height<=D.ClientHeight),'export review control fits '+Control.ClassName+' '+IntToStr(PPI)+' '+IntToStr(Kind));
+        if Control is TRadioGroup then begin
+          Radio:=TRadioGroup(Control); Inc(RadioCount);
+          Check((Radio.Items.Count=2) and (Radio.ItemIndex=0) and (Radio.Height>=MulDiv(80,PPI,96)),
+            'export review retains both reachable output choices with changed-only default '+IntToStr(PPI)+' '+IntToStr(Kind));
+          for J:=0 to D.ComponentCount-1 do if (D.Components[J] is TLabel) and TLabel(D.Components[J]).Visible then begin
+            LabelControl:=TLabel(D.Components[J]); Check(LabelControl.Top+LabelControl.Height+Margin<=Radio.Top,
+              'export warning and output path do not overlap output choices '+IntToStr(PPI)+' '+IntToStr(Kind));
+          end;
+        end;
+      end;
+      Check(RadioCount=1,'export review has a single output selection stage '+IntToStr(PPI)+' '+IntToStr(Kind));
+    end;
+  begin
+    Original:=FProject.Snapshot; Probe:=TMainForm.Create(nil); D:=nil; PNG:=TPngImage.Create;
+    try
+      Project:=TComicProject.Create; Project.Initialize('出力確認 fixture','1'); Probe.AdoptProject(Project,False);
+      ImageID:=Project.ImportImage(TPath.Combine(Folder,'reference.bmp'),'').ID; Project.Pages.Add(TComicPage.Create);
+      AddPanel(0,ImageID,TRectF.Create(100,100,400,400)); AddPanel(0,ImageID,TRectF.Create(450,100,750,400));
+      AddPanel(0,'',TRectF.Create(800,100,1100,400)); AddPanel(1,'missing-asset',TRectF.Create(100,100,400,400));
+      AddPanel(1,ImageID,TRectF.Create(450,100,750,400)); Before:=Project.Snapshot; Output:=TPath.Combine(Project.Folder,'Output');
+      Probe.RefreshUI; Probe.FTabs.ActivePageIndex:=1; Probe.TabChanged(nil); Probe.SelectSinglePanel(2); Probe.FTool:=0;
+      Probe.HandleNeeded; B.SetSize(Probe.ClientWidth,Probe.ClientHeight); Probe.PaintTo(B.Canvas,0,0);
+      PointA:=Probe.Page.Panels[2].Bounds.CenterPoint; X:=Probe.FPageRect.Left+Round(PointA.X*Probe.FScale); Y:=Probe.FPageRect.Top+Round(PointA.Y*Probe.FScale);
+      Probe.MouseDown(Probe.FCanvas,mbLeft,[],X,Y); Probe.MouseMove(Probe.FCanvas,[ssLeft,ssAlt],X+20,Y+12);
+      Check(Probe.FDragging and (Project.Snapshot<>Before),'export review starts with a pending panel drag');
+      History:=Probe.FUndo.Count; D:=Probe.CreateExportOptions;
+      Check(not Probe.FDragging and (Project.Snapshot=Before) and (Probe.FUndo.Count=History),'opening export review cancels a pending drag before counting warnings');
+      Check((Pos('画像未配置・参照切れ：2 コマ',D.WarningText)>0) and (Pos('同じ画像の重複配置：2 コマ',D.WarningText)>0),
+        'export review counts missing images and reused image identities across every page');
+      Check(D.OutputPath=Output,'export review retains the complete project output path');
+      for I:=0 to D.ComponentCount-1 do if D.Components[I] is TEdit then begin
+        with TEdit(D.Components[I]) do begin
+          Check(ReadOnly and (Text=Output) and ShowHint and (Hint=Output),'long export path is selectable read-only text with a full-path hint');
+          SelectAll; Check(SelText=Output,'entire export path can be selected without modifying it');
+        end;
+      end;
+      D.ModalResult:=mrCancel; Check(not D.Accepted(All) and not All,'warning review cancellation cannot accept output');
+      D.ModalResult:=mrOK; Check(D.Accepted(All) and not All,'warnings allow explicit changed-only output without a second confirmation');
+      for I:=0 to D.ComponentCount-1 do if D.Components[I] is TRadioGroup then TRadioGroup(D.Components[I]).ItemIndex:=1;
+      Check(D.Accepted(All) and All,'warnings allow explicit all-page output without rejecting duplicate images'); FreeAndNil(D);
+      for Kind:=0 to 2 do for PPI in [96,144] do begin
+        case Kind of
+          0: D:=TComicExportDialog.CreateOptions(Probe,Output,Probe.OpenOutput,'');
+          1: D:=TComicExportDialog.CreateOptions(Probe,Output,Probe.OpenOutput,'画像未配置・参照切れ：2 コマ。画像のない部分も含めて出力します。');
+          2: D:=Probe.CreateExportOptions;
+        end;
+        CheckLayout('export-review-'+IntToStr(Kind));
+        PostMessage(D.Handle,WM_CLOSE,0,0); D.ShowModal;
+        Check((D.ModalResult=mrCancel) and (Project.Snapshot=Before) and (Probe.FUndo.Count=History),
+          'native export review close preserves project and undo '+IntToStr(PPI)+' '+IntToStr(Kind)); FreeAndNil(D);
+      end;
+      Project.Pages[0].Panels.Delete(2); Project.Pages.Delete(1); Project.Pages[0].Panels.Delete(1); Probe.RefreshUI;
+      D:=Probe.CreateExportOptions; Check(D.WarningText='','unique valid image assignments do not show an export warning'); FreeAndNil(D);
+      Check(Length(TDirectory.GetFiles(Output))=0,'cancelled export review creates no output PNG or cache files');
+      Check(FProject.Snapshot=Original,'export review fixtures preserve the active project');
+    finally D.Free; PNG.Free; Probe.Free; end;
+  end;
   procedure RecentProjectChecks;
   var Recent,CopyRecent: TComicRecentProjects; Probe: TMainForm; Project: TComicProject; Path,Before,Original,Saved,Draft,SourceFile,BrokenFile: string;
     Lock: THandle; I,History: Integer; Failed: Boolean; Json: TJSONObject; Pair: TJSONPair; Pages: TJSONArray; BadBalloon: TComicBalloon;
@@ -2760,7 +3214,7 @@ var B: TBitmap; A,A2: TComicAsset; P: TComicPanel; Balloon: TComicBalloon;
           Check(not ExportDialog.Accepted(All) and not All and not Probe.FDragging and (Project.Snapshot=Before) and (Probe.FUndo.Count=History),
             'export dialog cancellation after dragging preserves exact committed data '+IntToStr(PPI));
           ExportDialog.HandleNeeded; ExportDialog.Scaled:=True; ExportDialog.ScaleForPPI(PPI); ExportDialog.Scaled:=False;
-          ExportDialog.ClientWidth:=MulDiv(600,PPI,96); ExportDialog.ClientHeight:=MulDiv(246,PPI,96); ExportDialog.Realign;
+          ExportDialog.ClientWidth:=MulDiv(600,PPI,96); if ExportDialog.WarningText='' then ExportDialog.ClientHeight:=MulDiv(246,PPI,96) else ExportDialog.ClientHeight:=MulDiv(340,PPI,96); ExportDialog.Realign;
           ExportDialog.HandleNeeded; B.SetSize(ExportDialog.ClientWidth,ExportDialog.ClientHeight); ExportDialog.PaintTo(B.Canvas,0,0);
           for I:=0 to ExportDialog.ComponentCount-1 do if ExportDialog.Components[I] is TButton then with TButton(ExportDialog.Components[I]) do
             Check((Left>=0) and (Top>=0) and (Left+Width<=Parent.ClientWidth) and (Top+Height<=Parent.ClientHeight),
@@ -3653,6 +4107,142 @@ var B: TBitmap; A,A2: TComicAsset; P: TComicPanel; Balloon: TComicBalloon;
       Check(ExportSequence(Project,Probe.FRenderer,False)=1,'undo after tail export redraws the restored compound content safely');
     finally Shifted.Free; Reference.Free; PNG.Free; Probe.Free; end;
   end;
+  procedure BalloonContourChecks;
+  const ShapeNames: array[0..2] of string = ('四角','楕円','角丸');
+    ContourNames: array[1..3] of string = ('ギザギザ','波線','雲形');
+  var Probe: TMainForm; Project,Reloaded: TComicProject; Balloon,Legacy: TComicBalloon;
+    Panel: TComicPanel; Tail: TComicTail; Reference,Shifted: TBitmap;
+    Shape,Kind,PPI,X,Y,Saved,History,Index: Integer; Body,Plain,Difference,Translated: HRGN;
+    RegionBounds: TRect; Bounds: TRectF; Before,After,LabelText: string; Same,Failed: Boolean;
+    J: TJSONObject; Pair: TJSONPair; Q,Outside: TPointF; KeyValue: Word;
+    procedure SelectBalloon;
+    begin Probe.FBalloonIndex:=0; Probe.FTool:=0; Probe.LoadBalloonControls(Probe.Page.Balloons[0]); Probe.UpdateIconState; end;
+    procedure PaintProbe;
+    begin Probe.HandleNeeded; B.SetSize(Probe.ClientWidth,Probe.ClientHeight); Probe.PaintTo(B.Canvas,0,0); end;
+  begin
+    Probe:=TMainForm.Create(nil); Reference:=TBitmap.Create; Shifted:=TBitmap.Create;
+    try
+      Project:=TComicProject.Create; Project.Initialize('吹き出し輪郭サンプル','1'); Project.Width:=900; Project.Height:=1050;
+      Probe.AdoptProject(Project,False); Project.ImportImage(TPath.Combine(Folder,'reference.bmp'),'');
+      Panel:=TComicPanel.Create; Panel.Bounds:=TRectF.Create(30,30,870,1020); Panel.ImageID:=Project.Assets[0].ID;
+      Probe.Page.Panels.Add(Panel); Balloon:=TComicBalloon.Create; Balloon.Bounds:=TRectF.Create(200,250,650,650);
+      Balloon.PanelID:=Panel.ID; Balloon.Text:='輪郭テスト'; Probe.Page.Balloons.Add(Balloon);
+      Tail:=TComicTail.Create; Tail.Root:=Balloon.Bounds.CenterPoint; Tail.Tip:=TPointF.Create(780,800); Tail.Width:=120; Balloon.Tails.Add(Tail);
+      Probe.RefreshUI; Probe.FTabs.ActivePageIndex:=3; Probe.TabChanged(nil); SelectBalloon;
+      Reference.PixelFormat:=pf24bit; Reference.SetSize(450,525); Shifted.PixelFormat:=pf24bit; Shifted.SetSize(500,560);
+      for Shape:=0 to 2 do for Kind:=1 to 3 do begin
+        Balloon:=Probe.Page.Balloons[0]; Balloon.Shape:=Shape; Balloon.Contour:=TComicBalloonContour(Kind);
+        LabelText:=Format('contour %d shape %d',[Kind,Shape]);
+        Body:=BalloonBodyRegion(Balloon,Point(0,0),1); Plain:=ShapeRegion(Rect(200,250,650,650),Shape);
+        Difference:=CreateRectRgn(0,0,0,0); Translated:=BalloonBodyRegion(Balloon,Point(23,17),1);
+        try
+          GetRgnBox(Body,RegionBounds);
+          Check((RegionBounds.Width>300) and (RegionBounds.Height>300) and (RegionBounds.Left>=200) and
+            (RegionBounds.Top>=250) and (RegionBounds.Right<=651) and (RegionBounds.Bottom<=651) and
+            PtInRegion(Body,425,450),LabelText+' has a filled center and stays inside the editable body bounds');
+          Check(CombineRgn(Difference,Plain,Body,RGN_XOR)=COMPLEXREGION,LabelText+' differs from its plain basic shape');
+          OffsetRgn(Translated,-23,-17); Check(EqualRgn(Body,Translated),LabelText+' geometry is independent of canvas origin');
+          Outside:=TPointF.Create(0,0);
+          for X:=200 to 650 do for Y:=250 to 650 do
+            if PtInRegion(Plain,X,Y) and not PtInRegion(Body,X,Y) then begin Outside:=TPointF.Create(X,Y); Break; end;
+          Probe.FBalloonIndex:=-1;
+          Check((Outside.X<>0) and (Probe.HitBalloon(Outside)=-1) and not Probe.InsideBalloonBody(Balloon,Outside) and
+            (Probe.HitBalloon(Balloon.Bounds.CenterPoint)=0),LabelText+' selection and tail roots follow the visible contour');
+        finally Winapi.Windows.DeleteObject(Translated); Winapi.Windows.DeleteObject(Difference);
+          Winapi.Windows.DeleteObject(Plain); Winapi.Windows.DeleteObject(Body); end;
+        FRenderer.Draw(Reference.Canvas,Project,Probe.Page,Rect(0,0,450,525),False);
+        Saved:=SaveDC(Shifted.Canvas.Handle);
+        try SetViewportOrgEx(Shifted.Canvas.Handle,23,17,nil); FRenderer.Draw(Shifted.Canvas,Project,Probe.Page,Rect(0,0,450,525),False);
+        finally RestoreDC(Shifted.Canvas.Handle,Saved); Shifted.Canvas.Refresh; end;
+        Same:=True;
+        for Y:=0 to 524 do if not CompareMem(Reference.ScanLine[Y],
+          Pointer(NativeUInt(Shifted.ScanLine[Y+17])+23*3),450*3) then Same:=False;
+        if not Same then begin
+          Reference.SaveToFile(TPath.Combine(Folder,'contour-reference.bmp'));
+          Shifted.SaveToFile(TPath.Combine(Folder,'contour-translated.bmp'));
+        end;
+        Check(Same,LabelText+' body tails border and text match under translated DC rendering');
+        // A tail rooted at the body center must not introduce a border seam inside the union.
+        Check(Reference.Canvas.Pixels[215,240]=clWhite,LabelText+' merged tail has no internal border at its root');
+        Before:=Project.Snapshot; Project.Save; Reloaded:=TComicProject.Create;
+        try Reloaded.Load(TPath.Combine(Project.Folder,'Project.json'));
+          Check(Reloaded.Snapshot=Before,LabelText+' saves and reloads without changing text or tail identity');
+        finally Reloaded.Free; end;
+        SelectBalloon; Before:=Project.Snapshot; History:=Probe.FUndo.Count;
+        Probe.FContour.ItemIndex:=0; Probe.ApplyText(nil); After:=Project.Snapshot;
+        Check((Probe.Page.Balloons[0].Contour=bcPlain) and (Probe.FUndo.Count=History+1),LabelText+' setting applies as one undo operation');
+        Probe.Undo(nil); Check(Project.Snapshot=Before,LabelText+' undo restores the original compound balloon');
+        Probe.Redo(nil); Check(Project.Snapshot=After,LabelText+' redo restores the chosen contour'); Probe.Undo(nil);
+      end;
+      Balloon:=Probe.Page.Balloons[0]; Balloon.Contour:=bcCloud;
+      J:=Balloon.Json; Pair:=J.RemovePair('contour'); Pair.Free; Legacy:=TComicBalloon.Create;
+      try Legacy.Read(J); Check(Legacy.Contour=bcPlain,'missing contour in existing version 3 data defaults to plain');
+        for Index:=0 to 3 do begin
+          Pair:=J.RemovePair('contour'); Pair.Free;
+          case Index of
+            0: J.AddPair('contour',TJSONNumber.Create(-1)); 1: J.AddPair('contour',TJSONNumber.Create(4));
+            2: J.AddPair('contour',TJSONNumber.Create(1.5)); 3: J.AddPair('contour',TJSONString.Create('cloud'));
+          end;
+          Failed:=False; try Legacy.Read(J); except Failed:=True; end;
+          Check(Failed,'invalid contour is rejected '+IntToStr(Index));
+        end;
+      finally Legacy.Free; J.Free; end;
+      // All three variants remain compound objects during normal VCL drag/resize and cancellation.
+      for PPI in [96,144] do for Kind:=1 to 3 do begin
+        Probe.Scaled:=True; Probe.ScaleForPPI(PPI); Probe.Scaled:=False;
+        Probe.Width:=MulDiv(940,PPI,96); Probe.Height:=MulDiv(660,PPI,96); Probe.Realign;
+        Balloon:=Probe.Page.Balloons[0]; Balloon.Contour:=TComicBalloonContour(Kind); SelectBalloon; PaintProbe;
+        Before:=Project.Snapshot; Bounds:=Balloon.Bounds; Q:=Bounds.BottomRight;
+        X:=Probe.FPageRect.Left+Round(Q.X*Probe.FScale); Y:=Probe.FPageRect.Top+Round(Q.Y*Probe.FScale);
+        Probe.FCanvas.Perform(WM_LBUTTONDOWN,MK_LBUTTON,MakeLParam(X,Y));
+        Probe.FCanvas.Perform(WM_MOUSEMOVE,MK_LBUTTON,MakeLParam(X+20,Y+15));
+        Probe.FCanvas.Perform(WM_LBUTTONUP,0,MakeLParam(X+20,Y+15));
+        Balloon:=Probe.Page.Balloons[0]; LabelText:=Format('contour %d at PPI %d',[Kind,PPI]);
+        Check((Balloon.Contour=TComicBalloonContour(Kind)) and (Balloon.Bounds.Width>Bounds.Width) and
+          (Balloon.BorderWidth=3) and (Balloon.Tails.Count=1),LabelText+' resize preserves contour and fixed border with its owned tail');
+        Probe.Undo(nil); Check(Project.Snapshot=Before,LabelText+' resize undo restores all compound data');
+        SelectBalloon; PaintProbe; Q:=Probe.Page.Balloons[0].Bounds.CenterPoint;
+        X:=Probe.FPageRect.Left+Round(Q.X*Probe.FScale); Y:=Probe.FPageRect.Top+Round(Q.Y*Probe.FScale);
+        Probe.FCanvas.Perform(WM_LBUTTONDOWN,MK_LBUTTON,MakeLParam(X,Y));
+        Probe.FCanvas.Perform(WM_MOUSEMOVE,MK_LBUTTON,MakeLParam(X+20,Y+15));
+        KeyValue:=VK_ESCAPE; Probe.Key(Probe,KeyValue,[]);
+        Check((Project.Snapshot=Before) and not Probe.FDragging,LabelText+' escape cancels the entire compound move');
+        TScrollBox(Probe.FContour.Parent).ScrollInView(Probe.FContour); PaintProbe;
+        Check(Probe.FContour.ClientToScreen(Point(0,0)).Y>=Probe.FContour.Parent.ClientToScreen(Point(0,0)).Y,
+          LabelText+' contour choice can be reached by scrolling the narrow settings panel');
+      end;
+      Balloon:=Probe.Page.Balloons[0]; Balloon.Contour:=bcCloud; Balloon.Text:=''; Balloon.FillColor:=clYellow;
+      Balloon.Overflow:=True; Panel:=Probe.Page.Panels[0]; Panel.Bounds:=TRectF.Create(30,30,600,720);
+      FRenderer.Draw(Reference.Canvas,Project,Probe.Page,Rect(0,0,450,525),False);
+      Check(Reference.Canvas.Pixels[354,365]=clYellow,'contour and tail overflow together above the panel edge');
+      Balloon.Overflow:=False; FRenderer.Draw(Reference.Canvas,Project,Probe.Page,Rect(0,0,450,525),False);
+      Check(Reference.Canvas.Pixels[354,365]=clWhite,'owner clipping covers decorated body and tail together');
+      Balloon.Overflow:=True; Balloon.Transparent:=True;
+      FRenderer.Draw(Reference.Canvas,Project,Probe.Page,Rect(0,0,450,525),False);
+      Check(Reference.Canvas.Pixels[354,365]=clWhite,'text-only output hides decorated body and every tail');
+      Balloon.Transparent:=False; Balloon.FillColor:=clWhite; Balloon.Text:='雲形'; SelectBalloon;
+      Check(ExportSequence(Project,Probe.FRenderer,False)=1,'decorated balloon first export renders its page');
+      Check(ExportSequence(Project,Probe.FRenderer,False)=0,'unchanged decorated balloon reuses its PNG');
+      Probe.FContour.ItemIndex:=1; Probe.ApplyText(nil);
+      Check(ExportSequence(Project,Probe.FRenderer,False)=1,'contour edit invalidates the page PNG');
+      Probe.Undo(nil); Check(ExportSequence(Project,Probe.FRenderer,False)=1,'undo after contour export redraws restored content');
+      // Keep one gallery using the same fixture image for every basic shape and contour.
+      Probe.Page.Balloons.Clear; Panel:=Probe.Page.Panels[0]; Panel.Bounds:=TRectF.Create(30,30,870,1020);
+      for Shape:=0 to 2 do for Kind:=1 to 3 do begin
+        Balloon:=TComicBalloon.Create; Balloon.Shape:=Shape; Balloon.Contour:=TComicBalloonContour(Kind); Balloon.PanelID:=Panel.ID;
+        X:=55+(Kind-1)*275; Y:=70+Shape*315; Balloon.Bounds:=TRectF.Create(X,Y,X+235,Y+230);
+        Balloon.FontSize:=25; Balloon.Text:=ShapeNames[Shape]+sLineBreak+ContourNames[Kind]; Probe.Page.Balloons.Add(Balloon);
+        Tail:=TComicTail.Create; Tail.Root:=Balloon.Bounds.CenterPoint; Tail.Tip:=TPointF.Create(X+200,Y+275); Tail.Width:=32; Balloon.Tails.Add(Tail);
+      end;
+      Project.Save; FRenderer.ExportPage(Project,Probe.Page,TPath.Combine(Folder,'balloon-contours.png'));
+      AtomicWrite(TPath.Combine(Folder,'contour-sample-project.txt'),TPath.Combine(Project.Folder,'Project.json'));
+      // Tiny previews and narrow bodies must remain valid GDI objects without changing the model.
+      Balloon:=Probe.Page.Balloons[0]; Before:=Project.Snapshot;
+      Body:=BalloonBodyRegion(Balloon,Point(0,0),0.01);
+      try Check(Body<>0,'tiny decorated balloon preview creates a valid region'); finally Winapi.Windows.DeleteObject(Body); end;
+      Check(Project.Snapshot=Before,'previewing contours never mutates the saved model');
+    finally Shifted.Free; Reference.Free; Probe.Free; end;
+  end;
   procedure CreatedPanelSelectionChecks;
   var Probe: TMainForm; Project,Reloaded: TComicProject; Panel: TComicPanel; Initial,Before,AID,BID,DID,CID: string;
     X,Y,Kind: Integer;
@@ -4130,6 +4720,122 @@ var B: TBitmap; A,A2: TComicAsset; P: TComicPanel; Balloon: TComicBalloon;
       Reference.SaveToFile(TPath.Combine(Folder,'render-polygon-balloons.bmp'));
     finally Warm.Free; Shifted.Free; Reference.Free; Clone.Free; end;
   end;
+  procedure ViewportChecks;
+  var Probe: TMainForm; Project: TComicProject; Panel: TComicPanel; Balloon: TComicBalloon;
+    Tail: TComicTail; Overlay: TComicOverlay; Asset: TComicAsset; PPI,I: Integer;
+    Before,Outer: string; World,After,Pan,Start: TPointF; At: TPoint; Zoom: Double;
+    KeyCode: Word; Bitmap: TBitmap; PNG: TPngImage; Bounds: TRectF;
+    function Pixel(const P: TPointF): TPoint;
+    begin Probe.UpdateViewport; Result:=Point(Probe.FPageRect.Left+Round(P.X*Probe.FScale),Probe.FPageRect.Top+Round(P.Y*Probe.FScale)); end;
+    procedure Wheel(Delta: Integer; const P: TPoint);
+    var S: TPoint;
+    begin S:=Probe.FCanvas.ClientToScreen(P); Probe.Perform(WM_MOUSEWHEEL,MakeWParam(0,Delta),MakeLParam(S.X,S.Y)); end;
+    procedure Mode(Index,Tool: Integer);
+    begin Probe.CancelDrag; Probe.FTabs.ActivePageIndex:=Index; Probe.TabChanged(nil); Probe.FTool:=Tool; Probe.FPanelIndex:=0; Probe.FBalloonIndex:=-1; Probe.SelectSinglePanel(0); end;
+    procedure Draw(const Name: string);
+    begin Probe.HandleNeeded; Bitmap.SetSize(Probe.ClientWidth,Probe.ClientHeight); Probe.PaintTo(Bitmap.Canvas,0,0);
+      PNG.Assign(Bitmap); PNG.SaveToFile(TPath.Combine(Folder,Name+'-'+IntToStr(PPI)+'.png')); end;
+    procedure Untouched(const Message: string);
+    begin Check((Probe.FProject.Snapshot=Before) and (Probe.FUndo.Count=0) and (Probe.FRedo.Count=0) and not Probe.FDirty,Message+' '+IntToStr(PPI)); end;
+  begin
+    Outer:=FProject.Snapshot;
+    Probe:=TMainForm.Create(nil); Bitmap:=TBitmap.Create; PNG:=TPngImage.Create;
+    try
+      Project:=TComicProject.Create; Project.Initialize('表示操作テスト','1');
+      Asset:=Project.ImportImage(TPath.Combine(Folder,'reference.bmp'),'');
+      Panel:=TComicPanel.Create; Panel.Bounds:=TRectF.Create(100,120,500,550); Panel.ImageID:=Asset.ID; Project.Pages[0].Panels.Add(Panel);
+      Overlay:=TComicOverlay.Create; Overlay.Bounds:=TRectF.Create(0.2,0.2,0.7,0.7); Overlay.MaterialID:=Probe.FEffectMaterials[0].ID; Overlay.FileName:=Probe.FEffectMaterials[0].FileName; Panel.Overlays.Add(Overlay);
+      Panel:=TComicPanel.Create; Panel.Bounds:=TRectF.Create(620,650,1000,1080); Panel.ImageID:=Asset.ID; Project.Pages[0].Panels.Add(Panel);
+      Balloon:=TComicBalloon.Create; Balloon.Bounds:=TRectF.Create(200,200,420,330); Balloon.Text:='表示テスト'; Project.Pages[0].Balloons.Add(Balloon);
+      Tail:=TComicTail.Create; Tail.Root:=TPointF.Create(280,320); Tail.Tip:=TPointF.Create(570,600); Tail.Width:=35; Balloon.Tails.Add(Tail);
+      Project.Pages.Add(TComicPage.Create); Probe.AdoptProject(Project,False);
+      Before:=Probe.FProject.Snapshot;
+      for PPI in [96,144] do begin
+        Probe.Scaled:=True; Probe.ScaleForPPI(PPI); Probe.Scaled:=False;
+        Probe.Width:=MulDiv(1420,PPI,96); Probe.Height:=MulDiv(920,PPI,96);
+        Check(Probe.CurrentPPI=PPI,'viewport uses requested real VCL PPI '+IntToStr(PPI));
+        Mode(1,0); Probe.ResetViewport; Draw('viewport-fit');
+        Check(SameValue(Probe.FViewZoom,1) and (Probe.FScale>0),'viewport starts in fit '+IntToStr(PPI));
+        At:=Pixel(TPointF.Create(300,400)); World:=Probe.ToPage(At.X,At.Y); Zoom:=Probe.FViewZoom;
+        Wheel(120,At); After:=Probe.ToPage(At.X,At.Y);
+        Check((Probe.FViewZoom>Zoom) and (Hypot(World.X-After.X,World.Y-After.Y)*Probe.FScale<=1.5),'wheel zoom keeps cursor world anchor '+IntToStr(PPI));
+        Zoom:=Probe.FViewZoom; Wheel(30,At); Check(Probe.FViewZoom>Zoom,'high-resolution wheel delta zooms smoothly '+IntToStr(PPI));
+        Zoom:=Probe.FViewZoom; Wheel(120,Point(-5,-5)); Check(Probe.FViewZoom=Zoom,'wheel outside canvas leaves display alone '+IntToStr(PPI));
+        Wheel(24000,At); Wheel(24000,At); Check(SameValue(Probe.FViewZoom,16),'wheel upper zoom limit '+IntToStr(PPI));
+        Wheel(-24000,At); Wheel(-24000,At); Check(SameValue(Probe.FViewZoom,0.1),'wheel lower zoom limit '+IntToStr(PPI));
+        KeyCode:=Ord('0'); Probe.Key(nil,KeyCode,[ssCtrl]); Check((KeyCode=0) and SameValue(Probe.FViewZoom,1),'Ctrl+0 restores fit '+IntToStr(PPI));
+        Untouched('wheel and fit preserve data undo and dirty state');
+        At:=Pixel(TPointF.Create(300,400)); Pan:=Probe.FViewPan;
+        Probe.FCanvas.Perform(WM_MBUTTONDOWN,MK_MBUTTON,MakeLParam(At.X,At.Y));
+        Check(Probe.FViewPanning and not Probe.FDragging,'middle button takes view priority over objects '+IntToStr(PPI));
+        Probe.FCanvas.Perform(WM_MOUSEMOVE,MK_MBUTTON,MakeLParam(At.X+70,At.Y+40));
+        Check((Probe.FViewPan<>Pan) and (Probe.FPanelIndex=0),'middle drag pans without changing selection '+IntToStr(PPI));
+        Zoom:=Probe.FViewZoom; Wheel(120,At); Check(Probe.FViewZoom=Zoom,'wheel waits until active pan is released '+IntToStr(PPI));
+        Probe.MouseUp(nil,mbLeft,[],At.X+70,At.Y+40); Check(Probe.FViewPanning,'other button release does not end middle pan '+IntToStr(PPI));
+        Probe.FCanvas.Perform(WM_MBUTTONUP,0,MakeLParam(At.X+70,At.Y+40));
+        Check(not Probe.FViewPanning and (Probe.FCanvas.Cursor=crDefault),'middle button release ends pan '+IntToStr(PPI));
+        Untouched('middle pan preserves data undo and dirty state');
+        At:=Pixel(TPointF.Create(35,35)); Check(Probe.EmptyViewPoint(Probe.ToPage(At.X,At.Y)),'blank page margin is an empty pan target '+IntToStr(PPI));
+        Probe.FCanvas.Perform(WM_LBUTTONDOWN,MK_LBUTTON,MakeLParam(At.X,At.Y));
+        Check(Probe.FViewPanning and not Probe.FDragging,'empty left press starts view pan '+IntToStr(PPI));
+        Probe.FCanvas.Perform(WM_MOUSEMOVE,MK_LBUTTON,MakeLParam(At.X+35,At.Y+25));
+        Probe.FCanvas.Perform(WM_LBUTTONUP,0,MakeLParam(At.X+35,At.Y+25)); Untouched('empty left drag preserves data undo and dirty state');
+        Pan:=Probe.FViewPan; Probe.MouseDown(nil,mbMiddle,[],At.X,At.Y); Probe.MouseMove(nil,[ssMiddle],At.X+40,At.Y+20);
+        KeyCode:=VK_ESCAPE; Probe.Key(nil,KeyCode,[]);
+        Check(not Probe.FViewPanning and (Probe.FViewPan=Pan),'Esc rolls back only the current view pan '+IntToStr(PPI));
+        Probe.MouseDown(nil,mbMiddle,[],At.X,At.Y); Probe.MouseMove(nil,[ssMiddle],At.X+40,At.Y+20); Pan:=Probe.FViewPan;
+        Probe.FView.Perform(WM_CAPTURECHANGED,0,0);
+        Check(not Probe.FViewPanning and (Probe.FViewPan=Pan),'capture loss releases pan and retains display position '+IntToStr(PPI));
+        Probe.MouseDown(nil,mbMiddle,[],At.X,At.Y); Probe.MouseMove(nil,[],At.X+5,At.Y+5);
+        Check(not Probe.FViewPanning,'missing held-button flag releases pan '+IntToStr(PPI));
+        Probe.MouseDown(nil,mbMiddle,[],At.X,At.Y); Probe.FPages.ItemIndex:=1; Probe.PageSelect(nil);
+        Check(not Probe.FViewPanning and SameValue(Probe.FViewZoom,1),'page switch releases pan and restores fit '+IntToStr(PPI));
+        Probe.FPages.ItemIndex:=0; Probe.PageSelect(nil); Mode(1,1); At:=Pixel(TPointF.Create(35,35));
+        Probe.MouseDown(nil,mbLeft,[],At.X,At.Y); Start:=Probe.FStart;
+        Check(Probe.FFirst and not Probe.FViewPanning,'creation tool keeps empty left click as its first point '+IntToStr(PPI));
+        Wheel(120,At); Probe.MouseDown(nil,mbMiddle,[],At.X,At.Y); Probe.MouseMove(nil,[ssMiddle],At.X+20,At.Y+10); Probe.MouseUp(nil,mbMiddle,[],At.X+20,At.Y+10);
+        Check(Probe.FFirst and (Probe.FStart=Start),'wheel and middle pan preserve pending creation coordinates '+IntToStr(PPI));
+        KeyCode:=VK_ESCAPE; Probe.Key(nil,KeyCode,[]); Mode(1,0); Probe.ResetViewport;
+        At:=Pixel(TPointF.Create(300,400)); Wheel(120,At); Wheel(120,At); Probe.MouseDown(nil,mbMiddle,[],At.X,At.Y); Probe.MouseMove(nil,[ssMiddle],At.X+20,At.Y+10); Probe.MouseUp(nil,mbMiddle,[],At.X+20,At.Y+10);
+        Draw('viewport-zoom-pan'); Untouched('navigation after creation preserves project');
+        Bounds:=Probe.Page.Panels[0].Bounds; At:=Pixel(Bounds.CenterPoint); Pan:=Probe.FViewPan;
+        Probe.MouseDown(nil,mbLeft,[],At.X,At.Y); Check(Probe.FDragging and not Probe.FViewPanning,'panel body edits before empty-pan fallback after zoom '+IntToStr(PPI));
+        Zoom:=Probe.FViewZoom; Wheel(120,At); Check(Probe.FViewZoom=Zoom,'wheel cannot shift an in-progress edit frame '+IntToStr(PPI));
+        Probe.MouseMove(nil,[ssLeft,ssAlt],At.X+18,At.Y+12); Check(Probe.Page.Panels[0].Bounds<>Bounds,'zoomed canvas drag edits panel geometry '+IntToStr(PPI));
+        Probe.FView.Perform(WM_CAPTURECHANGED,0,0);
+        Check(not Probe.FDragging and (Probe.Page.Panels[0].Bounds=Bounds) and (Probe.FViewPan=Pan),'capture loss cancels edit without panning or adding undo '+IntToStr(PPI));
+        for I:=0 to 7 do begin
+          At:=Pixel(EditHandles(Probe.Page.Panels[0].Bounds)[I]); Probe.MouseDown(nil,mbLeft,[],At.X,At.Y);
+          Check(Probe.FDragging and not Probe.FViewPanning and (Probe.FDragHandle=I+1),'zoomed panel handle keeps priority '+IntToStr(I)+' '+IntToStr(PPI)); Probe.CancelDrag;
+        end;
+        At:=Pixel(Probe.VertexHandles(Probe.Page.Panels[0])[0]); Probe.MouseDown(nil,mbLeft,[],At.X,At.Y);
+        Check(Probe.FDragging and (Probe.FDragVertex>=0) and not Probe.FViewPanning,Format('vertex handle keeps priority %d [drag=%s pan=%s vertex=%d handle=%d scale=%.6f x=%d y=%d]',[PPI,BoolToStr(Probe.FDragging,True),BoolToStr(Probe.FViewPanning,True),Probe.FDragVertex,Probe.FDragHandle,Probe.FScale,At.X,At.Y])); Probe.CancelDrag;
+        Probe.FSelectedPanels.Add(Probe.Page.Panels[1].ID); Probe.FPanelIndex:=1;
+        At:=Pixel(Probe.SelectedPanelBounds.CenterPoint); Probe.MouseDown(nil,mbLeft,[],At.X,At.Y);
+        Check(Probe.FDragging and (Length(Probe.FDragGroup)=2) and not Probe.FViewPanning,'selected group gap remains group move '+IntToStr(PPI)); Probe.CancelDrag;
+        Mode(2,0); At:=Pixel(EditHandles(Probe.FRenderer.ImageBounds(Probe.FProject,Probe.Page.Panels[0]))[0]); Probe.MouseDown(nil,mbLeft,[],At.X,At.Y);
+        Check(Probe.FDragging and not Probe.FViewPanning,'image handle keeps priority outside panel '+IntToStr(PPI)); Probe.CancelDrag;
+        Mode(3,0); Probe.FBalloonIndex:=0; At:=Pixel(Probe.Page.Balloons[0].Bounds.CenterPoint); Probe.MouseDown(nil,mbLeft,[],At.X,At.Y);
+        Check(Probe.FDragging and not Probe.FViewPanning,'balloon body keeps priority '+IntToStr(PPI)); Probe.CancelDrag;
+        Probe.FTool:=13; At:=Pixel(Probe.FRenderer.BalloonTextBounds(Probe.Page.Balloons[0]).CenterPoint); Probe.MouseDown(nil,mbLeft,[],At.X,At.Y);
+        Check(Probe.FDragging and not Probe.FViewPanning,'text placement keeps priority '+IntToStr(PPI)); Probe.CancelDrag;
+        Probe.FTool:=12; Probe.FTailIndex:=0; At:=Pixel(Probe.Page.Balloons[0].Tails[0].Handles[2]); Probe.MouseDown(nil,mbLeft,[],At.X,At.Y);
+        Check(Probe.FDragging and (Probe.FDragTailHandle>0) and not Probe.FViewPanning,'tail handle keeps priority '+IntToStr(PPI)); Probe.CancelDrag;
+        Check(not Probe.EmptyViewPoint(TPointF.Create(550,580)),'visible tail is not empty space '+IntToStr(PPI));
+        Mode(4,0); Probe.FEffectCategory.ItemIndex:=0; Probe.FEffectIndex:=0; At:=Pixel(EditHandles(OverlayBounds(Probe.Page.Panels[0],Probe.Page.Panels[0].Overlays[0]))[0]); Probe.MouseDown(nil,mbLeft,[],At.X,At.Y);
+        Check(Probe.FDragging and not Probe.FViewPanning,'material handle keeps priority '+IntToStr(PPI)); Probe.CancelDrag;
+        Mode(1,0); Probe.FSnap.Checked:=True; World:=Probe.FProject.PageBasis.Frame.TopLeft;
+        After:=Probe.SnapCreationPoint(TPointF.Create(World.X+3/Probe.FScale,World.Y+2/Probe.FScale));
+        Check(Hypot(After.X-World.X,After.Y-World.Y)<0.01,'zoom and pan retain frame snapping coordinates '+IntToStr(PPI));
+        Untouched('all navigation and cancelled priority probes preserve data');
+      end;
+      Probe.MouseDown(nil,mbMiddle,[],10,10); Project:=TComicProject.Create; Project.Folder:=Probe.FProject.Folder; Project.Restore(Probe.FProject.Snapshot);
+      Probe.AdoptProject(Project,False);
+      Check(not Probe.FViewPanning and SameValue(Probe.FViewZoom,1),'project replacement releases view pan and resets camera');
+      Check(FProject.Snapshot=Outer,'viewport checks preserve the outer smoke-test project');
+    finally PNG.Free; Bitmap.Free; Probe.Free; end;
+  end;
+
   procedure GeometryChecks;
   var OriginalProject,Reloaded: TComicProject; OriginalUndo,OriginalRedo: TList<string>;
     Model,Before,ImageID,OwnerID: string; Panel,Thin: TComicPanel;
@@ -4683,6 +5389,7 @@ begin
     FontStyleChecks;
     CreatedPanelSelectionChecks;
     TailChecks;
+    BalloonContourChecks;
     TextPlacementChecks;
     TextScaledWrappingChecks;
     GenerationPresetChecks;
@@ -4694,6 +5401,8 @@ begin
     BlurScaleChecks;
     RecentProjectChecks;
     GapSnapChecks;
+    PanelTransformSnapChecks;
+    ExportReviewChecks;
     BulkDataChecks;
     IconChecks;
     Layout:=TComicLayout.Create; Layout.Name:='楕円のテスト・共通';
@@ -4843,6 +5552,7 @@ begin
       B.SaveToFile(TPath.Combine(Folder,'window-characters.bmp'));
     finally Dialog.Free; end;
     FProject.Save; FDirty:=False;
+    ViewportChecks;
     Lines.Add('PASS: hidden VCL captures, no external generation or transmission.');
     TFile.WriteAllText(TPath.Combine(Folder,'result.txt'),Lines.Text,TEncoding.UTF8);
   finally Lines.Free; B.Free; end;

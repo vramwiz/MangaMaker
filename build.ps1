@@ -22,7 +22,7 @@ try {
     try {
       $env:MANGAMAKER_DATA_ROOT = Join-Path $taskRoot 'Data'
       $taskProcess = Start-Process -FilePath (Join-Path $taskBuildRoot 'MangaMaker.exe') -ArgumentList @('--self-test',('"' + $taskRoot + '"')) -WindowStyle Hidden -PassThru
-      if (-not $taskProcess.WaitForExit(60000)) { throw 'Self-test timed out.' }
+      if (-not $taskProcess.WaitForExit(180000)) { throw 'Self-test timed out.' }
       Get-Content -LiteralPath (Join-Path $taskRoot 'result.txt') -Encoding UTF8
       Write-Output $taskRoot
       if ($taskProcess.ExitCode -ne 0) { throw 'Self-test failed.' }

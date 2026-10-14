@@ -27,6 +27,7 @@ type
 function ShapeRegion(const R: TRect; Shape: Integer): HRGN;
 function PanelRegion(Panel: TComicPanel; const Origin: TPoint; Scale: Double; DeviceCanvas: TCanvas=nil): HRGN;
 function TailRegion(Tail: TComicTail; const Origin: TPoint; Scale: Double): HRGN;
+function BalloonBodyRegion(Balloon: TComicBalloon; const Origin: TPoint; Scale: Double): HRGN;
 function BalloonRegion(Balloon: TComicBalloon; const Origin: TPoint; Scale: Double): HRGN;
 function BuildBalloonTextLayout(Canvas: TCanvas; Balloon: TComicBalloon; Layout: TComicTextLayout): Double;
 implementation
@@ -47,12 +48,54 @@ begin
     try CombineRgn(Result,Result,Circle,RGN_OR); finally DeleteObject(Circle); end;
   end;
 end;
-function BalloonRegion(Balloon: TComicBalloon; const Origin: TPoint; Scale: Double): HRGN;
-var Tail: TComicTail; TailShape: HRGN; R: TRect;
+function BalloonBodyRegion(Balloon: TComicBalloon; const Origin: TPoint; Scale: Double): HRGN;
+const Samples=384;
+var R: TRect; Points: TArray<TPoint>; I,K,Count: Integer;
+  RX,RY,CX,CY,Angle,DX,DY,Extent,Low,High,Middle,Radius,X,Y,Factor,Phase: Double;
 begin
   R:=Rect(Origin.X+Round(Balloon.Bounds.Left*Scale),Origin.Y+Round(Balloon.Bounds.Top*Scale),
     Origin.X+Round(Balloon.Bounds.Right*Scale),Origin.Y+Round(Balloon.Bounds.Bottom*Scale));
-  Result:=ShapeRegion(R,Balloon.Shape);
+  if Balloon.Contour=bcPlain then Exit(ShapeRegion(R,Balloon.Shape));
+  // Work in page coordinates: zoom and DPI cannot change the number or phase of the lobes.
+  RX:=Balloon.Bounds.Width/2; RY:=Balloon.Bounds.Height/2;
+  if (RX<=0) or (RY<=0) then Exit(CreateRectRgn(0,0,0,0));
+  CX:=Balloon.Bounds.CenterPoint.X; CY:=Balloon.Bounds.CenterPoint.Y;
+  Radius:=Min(Min(RX,RY),Max(4,Balloon.Bounds.Width/16));
+  Count:=Samples; if Balloon.Contour=bcJagged then Count:=48;
+  SetLength(Points,Count);
+  for I:=0 to Count-1 do begin
+    Angle:=2*Pi*I/Count; DX:=Cos(Angle); DY:=Sin(Angle); Extent:=1;
+    if Balloon.Shape<>1 then begin
+      Extent:=1/Max(Abs(DX),Abs(DY));
+      if Balloon.Shape=2 then begin
+        Low:=0; High:=Extent;
+        for K:=1 to 20 do begin
+          Middle:=(Low+High)/2;
+          X:=Max(0,Abs(RX*DX*Middle)-(RX-Radius));
+          Y:=Max(0,Abs(RY*DY*Middle)-(RY-Radius));
+          if Sqr(X)+Sqr(Y)<=Sqr(Radius) then Low:=Middle else High:=Middle;
+        end;
+        Extent:=Low;
+      end;
+    end;
+    case Balloon.Contour of
+      bcJagged: if Odd(I) then Factor:=0.84 else Factor:=1;
+      bcWave: Factor:=0.965+0.035*Cos(16*Angle);
+      bcCloud: begin
+        // Envelope of twelve overlapping circular lobes, normalized to the body bounds.
+        Phase:=Angle-Round(Angle/(Pi/6))*(Pi/6);
+        Factor:=0.75*Cos(Phase)+Sqrt(Max(0,0.0625-Sqr(0.75*Sin(Phase))));
+      end;
+    else Factor:=1; end;
+    Points[I]:=Point(Origin.X+Round((CX+RX*DX*Extent*Factor)*Scale),
+      Origin.Y+Round((CY+RY*DY*Extent*Factor)*Scale));
+  end;
+  Result:=CreatePolygonRgn(Points[0],Length(Points),WINDING);
+end;
+function BalloonRegion(Balloon: TComicBalloon; const Origin: TPoint; Scale: Double): HRGN;
+var Tail: TComicTail; TailShape: HRGN;
+begin
+  Result:=BalloonBodyRegion(Balloon,Origin,Scale);
   for Tail in Balloon.Tails do begin TailShape:=TailRegion(Tail,Origin,Scale);
     try CombineRgn(Result,Result,TailShape,RGN_OR); finally DeleteObject(TailShape); end;
   end;

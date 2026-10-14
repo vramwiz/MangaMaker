@@ -72,6 +72,7 @@ type
     TextLayoutFontSize: Integer;
     Tails: TArray<TComicTailState>;
   end;
+  TComicBalloonContour = (bcPlain,bcJagged,bcWave,bcCloud);
   TComicBalloon = class
   private
     FTipX,FTipY: Double;
@@ -85,6 +86,7 @@ type
     ID, PanelID, Text: string;
     Bounds: TRectF;
     Shape, FontSize: Integer;
+    Contour: TComicBalloonContour;
     FontFamily: string;
     FontColor: TColor;
     FontStyle: TFontStyles;
@@ -414,7 +416,7 @@ function TComicBalloon.Json: TJSONObject;
 var A: TJSONArray; Tail: TComicTail;
 begin
   Result:=TJSONObject.Create; Result.AddPair('id',ID); Result.AddPair('panelId',PanelID);
-  Result.AddPair('text',Text); PutRect(Result,Bounds); Put(Result,'shape',Shape);
+  Result.AddPair('text',Text); PutRect(Result,Bounds); Put(Result,'shape',Shape); Put(Result,'contour',Ord(Contour));
   Put(Result,'fontSize',FontSize); Put(Result,'vertical',Vertical);
   Result.AddPair('fontFamily',FontFamily); Put(Result,'fontColor',FontColor);
   Put(Result,'fontBold',TFontStyle.fsBold in FontStyle); Put(Result,'fontItalic',TFontStyle.fsItalic in FontStyle);
@@ -428,10 +430,17 @@ begin
   A:=TJSONArray.Create; Result.AddPair('tails',A); for Tail in Tails do A.AddElement(Tail.Json);
 end;
 procedure TComicBalloon.Read(J: TJSONObject);
-var V: TJSONValue; A: TJSONArray; Tail: TComicTail; IDs: TDictionary<string,Boolean>;
+var V: TJSONValue; A: TJSONArray; Tail: TComicTail; IDs: TDictionary<string,Boolean>; ContourValue: Double;
 begin
   ID:=JStr(J,'id',ID); PanelID:=JStr(J,'panelId',''); Text:=JStr(J,'text',''); Bounds:=ReadRect(J);
   Shape:=Round(JNum(J,'shape',1)); FontSize:=Round(JNum(J,'fontSize',40));
+  if not (Shape in [0..2]) then raise Exception.Create('吹き出しの基本形状が不正です。');
+  V:=J.GetValue('contour');
+  if (V<>nil) and not (V is TJSONNumber) then raise Exception.Create('吹き出しの輪郭が不正です。');
+  ContourValue:=JNum(J,'contour',0);
+  if IsNan(ContourValue) or IsInfinite(ContourValue) or (ContourValue<0) or (ContourValue>3) or
+    (Frac(ContourValue)<>0) then raise Exception.Create('吹き出しの輪郭が不正です。');
+  Contour:=TComicBalloonContour(Trunc(ContourValue));
   if (FontSize<1) or (FontSize>1000) then raise Exception.Create('文字サイズが不正です。');
   FontFamily:=JStr(J,'fontFamily','Yu Gothic'); if FontFamily='' then FontFamily:='Yu Gothic';
   if Length(FontFamily)>200 then raise Exception.Create('フォント名が不正です。');

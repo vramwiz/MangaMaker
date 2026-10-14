@@ -1,0 +1,16 @@
+{
+  "Utc": "2026-10-14T01:46:32.1161047Z",
+  "Project": "D:\\DelphiProg\\MyApp\\MangaMaker\\Samples\\FeatureTour-20261014\\Project\\Project.json",
+  "Pages": 6,
+  "Panels": 24,
+  "Balloons": 40,
+  "Tails": 16,
+  "Overlays": 5,
+  "JsonAbsoluteReferences": 0,
+  "PNGCount": 6,
+  "AppSHA256": "31AC3ED851286BD40C7BD941419F1B094DEA971D2A7A767E1D38FDA86E07C516",
+  "Bytes": 9718666.0,
+  "OpenWorkflowPass": 42,
+  "ViewportNativePass": 111,
+  "FullRegressionPass": 1728
+}

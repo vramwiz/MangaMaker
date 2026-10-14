@@ -1,0 +1,1 @@
+PASS: character/background/generation/page/export dialogs captured with current application controls; project unchanged

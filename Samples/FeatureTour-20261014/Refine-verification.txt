@@ -1,0 +1,1 @@
+PASS: thought-tail positions clarified; formal save/reload and exactly 2 changed PNGs; unchanged export 0 redraws
