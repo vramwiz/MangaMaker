@@ -1,5 +1,49 @@
 ﻿# MangaMaker 作業記録
 
+## 検証成果物の削除（2026-10-14）
+
+- ユーザー指示により、検証用プロジェクト・EXE・データ・画像・ログ・退避コピーを含む `TestOutput` 全体、生成DCUの `Win64`、ルートの `MangaMaker.rsm` を削除。合計14,883ファイル、約6.411GiB。
+- 通常の読込履歴は `D:\Users\take6\MangaMaker\Presets\RecentProjects.json`。登録済みサンプルは `Samples/FeatureTour-20261014/Project/Project.json` で、削除した検証フォルダーには依存しない。
+- `Samples` 一式と配布ZIP、同梱App EXE、通常起動用のルートEXE、ソース、Tools、ビルドに必要なdpr/dproj/res、通常の人物・設定・履歴データを保持。保護対象141ファイルのSHA-256が削除前後で一致し、作品・Draft・人物のファイル参照21件とコマの画像ID参照を確認した。
+- 継続開発に必要な `Source/Tests` の回帰ソースとビルドスクリプトは保持。今回はビルド・自己検証を再実行せず、検証生成物を作り直していない。commit/pushなし。
+- 以下の過去記録にある `TestOutput` 配下の証跡・退避版・EXE・仮作品は削除済みで、再開時の現存成果物として使わない。過去の検証結果は記録として残す。次のビルドは `build.ps1` で新しく生成する。
+
+## コメント・肥大化防止の規約
+
+参照元：`../MapRaku/note.md` の「コメント・肥大化防止の規約」（2026-10-14確認）。同文書には元の参照元として `D:\DelphiProg\test\Backupn\note.md` が記載されている。今回はMapRakuの規約本文を読み取り参照した。
+
+- 日本語コメントは目的・判断理由・制約を説明し、コードの言い換えは避ける。各ユニット冒頭に責務を記載する。中止・上書き・例外・スレッド間通信では安全上の理由を説明する。
+- MangaMakerはユーザー指示（2026-10-14）により、**1ユニット1500行程度**を目安とする。参照元の300～500行から緩和した。1メソッド50行、1フォルダー5～8ユニットは引き継ぐ。責務が混ざれば行数に関係なく分割を検討する。行数合わせの細分化や将来用の空フォルダーは作らない。
+- 日本語を含むPascalはUTF-8 BOM付き。Win64 Debug／Releaseの警告・エラー0と `git diff --check` を確認する。
+
+`Tools/CheckSourceLayout.ps1` は1ユニット1500行・1フォルダー8ユニットを上限としてビルド前に確認する。行数以内でも責務の混在や長いメソッドをレビューする。50行を超えるメソッドを、行数だけのために細切れへ分割しない。
+
+## 規約の受領とコメント整理（2026-10-14）
+
+- ユーザー指定の `../MapRaku/note.md` から必要な規約と参照元を記録。ユニット行数は最新ユーザー指示の1500行程度へ変更。MapRaku側には変更しない。
+- 52ユニットの冒頭に日本語の責務コメントを記載。英語の判断理由を日本語に整理し、取消、上書き、保存失敗、スレッドからの結果受渡しについて理由を補足。分離後のフォームとWorkspaceが同じ状態を参照する設計も説明する。
+- テストをTests/Editor（6ユニット）・Management（3）・Support（2）へ配置し、全フォルダー8ユニット以内。構成チェックは1500行/8ユニットでPASS。通常版と検証版のWin64 Debug/Release計4構成をビルドし、エラー/警告/ヒントなし、git diff --checkも成功。全53 Pascalソース（52ユニット＋dpr）のコメント・空白を除くトークンが変更前と一致し、UTF-8 BOMとユニット責務コメントを確認。dpr比較では明示したテスト参照2パスの移動だけを補正。アプリの実行処理は変更していないため、直前の1763項目回帰を重複実行していない。証跡と変更前ソースはTestOutput/Comments-20261014/に保存。通常EXE・サンプル・ZIP・実作品・MapRakuは更新せず、commit/pushなし。
+
+## ソース構成整理（2026-10-14）
+
+- 開始時main/1d92e78。前回の画像配置D&D変更（README/MainForm/noteの未コミット差分）を保持。開始時MainFormは5977行、Source/Shellに33ユニット。開始時MainFormをTestOutput/Structure/Before/へ保存。
+- MainFormから自己検証をSource/Testsの共通fixture・実行入口・9分野へ分離。テスト専用のTComicTestFormを使用し、製品フォームからSmokeTestとアイコン検証専用状態を削除。チェック内容と実行順序を保持。
+- Workspaceの8ユニットへ画面構築/パイプ要求/画像生成/表示操作/幾何編集/マウス編集/吹き出し/漫画効果を分離。フォームは状態・所有権・イベント入口を持ち、非公開の実装ヘルパーへ委譲。ヘルパーに別の状態を持たせず、フォームのprotectedメンバーを参照。publicへ状態を公開していない。製品メソッドの欠落0件。MainFormは1299行。
+- 既存32ユニットをModel/Rendering/Editing/Text/Dialogs/Integration/Export/Diagnostics/Controlsへ移動し、Git blobで内容が元と一致することを確認。検索パスとプロジェクト参照を更新。他プロジェクトは参照・変更していない。
+- build.ps1の-SelfTestだけでMANGAMAKER_SELFTESTを定義し、Testsの検索パスとコードを組み込む。通常版はテストコードを含まず--self-testをexit2で拒否。通常ReleaseのテストDCU/計測DCUは0件。4つの既存CLIガードと通常版の拒否1件はexit2、生成0件。
+- Tools/CheckSourceLayout.ps1をビルド前に実行。通常1000行/フォーム1500行/1フォルダー12ユニットの上限をAGENTS/READMEへ記載。現構成52ユニットでPASS。自己検証をフォームへ戻すことや巨大includeへの退避は避ける。
+- 分離直後のDebugは1763項目PASS（TestOutput/d6e2ab81100c44bfb4aa0b267a6f4e60/、Structure/Debug-before-comments.log）。最終Debug/Releaseの同時実行は180秒の待ち時間上限に達し、大画像PNGが1ページ数分かかった。今回所有のRelease検証プロセスだけをパス照合後に停止して逐次検証へ変更（部分fixture 35de52a966014e8690fb45838bf1422fは保持）。残したDebugは65339f183bdf41f3a0960419a8fbc3bbで1763項目PASSへ完走。Releaseの単独実行は180秒以内に終了し、edeb2a063cb5498e923c35f94d2ee024で1763項目PASS（Structure/Release-sequential.log）。最終Debug/Releaseの全項目を確認済み。通常Releaseビルドは成功、エラー/警告/ヒントなし。
+- この区切りではコメントルールの受領待ちだった。受領後の対応は冒頭の「規約の受領とコメント整理」を参照。通常EXE・サンプル・ZIP・実作品はこの構成整理では更新していない。commit/pushなし。
+- 証跡：TestOutput/Structure/。Structure-verification.json、CLI-results.json、Production-Release.log、最終Debug/Releaseログ、開始時ソース、整理用スクリプトを保持。
+
+## 画像配置をD&Dに統一（2026-10-14）
+
+- 画像一覧からコマへのD&Dに統一。配置/解除ボタン、倍率コンボ、重複する画像管理ボタン、一覧ダブルクリック配置を削除。画像管理は既存メニューを使用し、画像のパン/比率維持8点拡縮を保持。
+- 画像配置欄の上部を188→56px（96PPI基準）へ縮小し、画像一覧を132px相当広げた。
+- コマの右クリックメニューに「画像の割り当て解除」とDel表記を追加。右クリックしたコマを対象にし、空白では開かない。キャンバスのDelも同じ解除処理へ接続。文字入力/画像一覧/別編集モードでは画像解除を実行しない。
+- D&Dは事前選択なしでドロップ先を選択し、配置後はキャンバスへフォーカス。人物未登録の既存作品でも画像D&Dを許可。解除は素材を保持し、配置状態をUndoで復元する。
+- 最終Win64 Debug/Releaseとも1763項目PASS、エラー/警告/ヒントなし。D&D対象/一覧拡張/ダブルクリック無効/右クリック対象切替/解除とUndo/Del/一覧フォーカス時の保持を確認。検証画像で一覧拡張を目視。実物理マウスでの確認は未実施。Debug fixture: TestOutput/68ea8448e72240cc8876cacac9365d4d/、Release: TestOutput/0b4cb2f4763f4541a0f58988194c68b3/。ログ: TestOutput/ImageDnd-Debug-final.log、TestOutput/ImageDnd-Release.log。最初のDebugは進捗ファイルの実行中読み取りによる共有競合で停止したため、終了後に読む方法で再実行して完走。失敗fixtureも保持。直下MangaMaker.exeを検証済みReleaseへ更新し、旧EXEはTestOutput/ImageDnd-Before/へ保存。サンプル同梱版/ZIPは今回更新していない。commit/pushは行っていない。
+
 ## 上部ツールバーをメニューへ統合（2026-10-14）
 
 - 開始時main/0895492096ea89a7254bb701b5f2f34ec8de87d3。前回の画像生成/Debug計測とユーザー試用の未コミット変更を保持。今回変更した既存ソースはMainFormだけで、キャッシュ高速化や描画ライブラリ移行は行っていない。

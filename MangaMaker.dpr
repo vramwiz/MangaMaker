@@ -1,4 +1,4 @@
-program MangaMaker;
+﻿program MangaMaker;
 
 uses
   System.SysUtils,
@@ -6,6 +6,10 @@ uses
   Vcl.Forms,
   Vcl.Themes,
   Vcl.Styles,
+{$IFDEF MANGAMAKER_SELFTEST}
+  ComicTestSupport in 'Source\Tests\Support\ComicTestSupport.pas',
+  ComicSelfTests in 'Source\Tests\Support\ComicSelfTests.pas',
+{$ENDIF}
   MangaMakerMainForm in 'Source\Shell\MangaMakerMainForm.pas' {MainForm};
 
 {$R *.res}
@@ -16,9 +20,12 @@ var
 
 begin
   IsSelfTest:=(ParamCount>0) and (ParamStr(1)='--self-test');
+{$IFNDEF MANGAMAKER_SELFTEST}
+  if IsSelfTest then Halt(2);
+{$ENDIF}
   if IsSelfTest then
   begin
-    // Validate before form construction can read the shared user library.
+    // 共有ライブラリに触れるフォームを作る前に、自己検証データの隔離条件を確認する。
     if ParamCount<>2 then Halt(2);
     TestFolder:=TPath.GetFullPath(ParamStr(2));
     TestData:=GetEnvironmentVariable('MANGAMAKER_DATA_ROOT');
@@ -30,11 +37,16 @@ begin
   TStyleManager.TrySetStyle('Windows Modern Dark');
   Application.MainFormOnTaskbar := True;
   Application.Title := 'MangaMaker';
-  Application.CreateForm(TMainForm, MainForm);
+{$IFDEF MANGAMAKER_SELFTEST}
+  if IsSelfTest then Application.CreateForm(TComicTestForm, MainForm)
+  else
+{$ENDIF}
+    Application.CreateForm(TMainForm, MainForm);
+{$IFDEF MANGAMAKER_SELFTEST}
   if IsSelfTest then
   begin
     try
-      MainForm.SmokeTest(ParamStr(2));
+      RunSelfTests(TComicTestForm(MainForm),ParamStr(2));
       MainForm.Free;
       Halt(0);
     except on E: Exception do
@@ -44,5 +56,6 @@ begin
       end;
     end;
   end;
+{$ENDIF}
   Application.Run;
 end.

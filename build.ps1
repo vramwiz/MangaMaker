@@ -2,6 +2,7 @@ param([switch]$SelfTest, [string]$OutputDirectory, [ValidateSet('Debug','Release
 $ErrorActionPreference = 'Stop'
 Push-Location $PSScriptRoot
 try {
+  & (Join-Path $PSScriptRoot 'Tools\CheckSourceLayout.ps1')
   $env:BDS = 'C:\Program Files (x86)\Embarcadero\Studio\37.0'
   $env:BDSCOMMONDIR = 'C:\Users\Public\Documents\Embarcadero\Studio\37.0'
   if (-not $OutputDirectory) {
@@ -12,7 +13,11 @@ try {
     throw 'Build output must stay inside this project''s TestOutput directory.'
   }
   New-Item -ItemType Directory -Path $taskBuildRoot -Force | Out-Null
-  & 'C:\Windows\Microsoft.NET\Framework\v4.0.30319\MSBuild.exe' MangaMaker.dproj /t:Build "/p:Config=$Configuration" /p:Platform=Win64 "/p:DCC_ExeOutput=$taskBuildRoot" "/p:DCC_DcuOutput=$taskBuildRoot\Dcu" /v:minimal /nologo
+  $taskBuildArguments = @('MangaMaker.dproj', '/t:Build', "/p:Config=$Configuration", '/p:Platform=Win64',
+    "/p:DCC_ExeOutput=$taskBuildRoot", "/p:DCC_DcuOutput=$taskBuildRoot\Dcu", '/v:minimal', '/nologo')
+  # 検証コードは明示指定時だけ組み込み、通常版へ検証用フォームや大きなfixtureを残さない。
+  if ($SelfTest) { $taskBuildArguments += '/p:MangaMakerSelfTest=true' }
+  & 'C:\Windows\Microsoft.NET\Framework\v4.0.30319\MSBuild.exe' @taskBuildArguments
   if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
   Write-Output (Join-Path $taskBuildRoot 'MangaMaker.exe')
   if ($SelfTest) {

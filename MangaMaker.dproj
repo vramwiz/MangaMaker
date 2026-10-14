@@ -1,4 +1,4 @@
-<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
     <PropertyGroup>
         <ProjectGuid>{9D27FFDC-6D7C-48DA-ADD5-13D0577B4934}</ProjectGuid>
         <ProjectVersion>20.4</ProjectVersion>
@@ -46,7 +46,7 @@
         <DCC_DcuOutput>Win64\$(Config)</DCC_DcuOutput>
         <DCC_ExeOutput>.</DCC_ExeOutput>
         <DCC_UsePackage>vcl;rtl;vclx;$(DCC_UsePackage)</DCC_UsePackage>
-        <DCC_UnitSearchPath>Source\Shell;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_UnitSearchPath>Source\Shell;Source\Workspace;Source\Model;Source\Rendering;Source\Editing;Source\Text;Source\Dialogs;Source\Integration;Source\Export;Source\Diagnostics;Source\Controls;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
         <SanitizedProjectName>MangaMaker</SanitizedProjectName>
         <VerInfo_Locale>1041</VerInfo_Locale>
         <VerInfo_Keys>CompanyName=;FileDescription=MangaMaker;FileVersion=1.0.0.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProductName=MangaMaker;ProductVersion=1.0.0.0;Comments=</VerInfo_Keys>
@@ -78,7 +78,19 @@
         <DCC_SymbolReferenceInfo>0</DCC_SymbolReferenceInfo>
         <DCC_Optimize>true</DCC_Optimize>
     </PropertyGroup>
+    <PropertyGroup Condition="'$(MangaMakerSelfTest)'=='true'">
+        <DCC_Define>MANGAMAKER_SELFTEST;$(DCC_Define)</DCC_Define>
+        <DCC_UnitSearchPath>Source\Tests\Support;Source\Tests\Editor;Source\Tests\Management;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+    </PropertyGroup>
     <ItemGroup>
+        <DCCReference Include="Source\Workspace\ComicWorkspaceUI.pas"/>
+        <DCCReference Include="Source\Workspace\ComicWorkspaceBridge.pas"/>
+        <DCCReference Include="Source\Workspace\ComicWorkspaceGeneration.pas"/>
+        <DCCReference Include="Source\Workspace\ComicWorkspaceViewport.pas"/>
+        <DCCReference Include="Source\Workspace\ComicWorkspaceGeometry.pas"/>
+        <DCCReference Include="Source\Workspace\ComicWorkspaceInteraction.pas"/>
+        <DCCReference Include="Source\Workspace\ComicWorkspaceBalloons.pas"/>
+        <DCCReference Include="Source\Workspace\ComicWorkspaceEffects.pas"/>
         <DelphiCompile Include="$(MainSource)">
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
