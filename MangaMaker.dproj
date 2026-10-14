@@ -36,6 +36,12 @@
         <Cfg_1>true</Cfg_1>
         <Base>true</Base>
     </PropertyGroup>
+    <PropertyGroup Condition="('$(Platform)'=='WinARM64EC' and '$(Cfg_1)'=='true') or '$(Cfg_1_WinARM64EC)'!=''">
+        <Cfg_1_WinARM64EC>true</Cfg_1_WinARM64EC>
+        <CfgParent>Cfg_1</CfgParent>
+        <Cfg_1>true</Cfg_1>
+        <Base>true</Base>
+    </PropertyGroup>
     <PropertyGroup Condition="'$(Config)'=='Release' or '$(Cfg_2)'!=''">
         <Cfg_2>true</Cfg_2>
         <CfgParent>Base</CfgParent>
@@ -46,7 +52,7 @@
         <DCC_DcuOutput>Win64\$(Config)</DCC_DcuOutput>
         <DCC_ExeOutput>.</DCC_ExeOutput>
         <DCC_UsePackage>vcl;rtl;vclx;$(DCC_UsePackage)</DCC_UsePackage>
-        <DCC_UnitSearchPath>Source\Shell;Source\Workspace;Source\Model;Source\Rendering;Source\Editing;Source\Text;Source\Dialogs;Source\Integration;Source\Export;Source\Diagnostics;Source\Controls;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_UnitSearchPath>Source\Shell;Source\Workspace;Source\Model;Source\Rendering;Source\Editing;Source\Text;Source\Dialogs;Source\Integration;Source\Export;Source\Diagnostics;Source\Controls;Source\Materials;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
         <SanitizedProjectName>MangaMaker</SanitizedProjectName>
         <VerInfo_Locale>1041</VerInfo_Locale>
         <VerInfo_Keys>CompanyName=;FileDescription=MangaMaker;FileVersion=1.0.0.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProductName=MangaMaker;ProductVersion=1.0.0.0;Comments=</VerInfo_Keys>
@@ -71,6 +77,9 @@
     <PropertyGroup Condition="'$(Cfg_1_Win64)'!=''">
         <BT_BuildType>Debug</BT_BuildType>
     </PropertyGroup>
+    <PropertyGroup Condition="'$(Cfg_1_WinARM64EC)'!=''">
+        <BT_BuildType>Debug</BT_BuildType>
+    </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_2)'!=''">
         <DCC_Define>RELEASE;$(DCC_Define)</DCC_Define>
         <DCC_DebugInformation>0</DCC_DebugInformation>
@@ -83,17 +92,10 @@
         <DCC_UnitSearchPath>Source\Tests\Support;Source\Tests\Editor;Source\Tests\Management;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
     </PropertyGroup>
     <ItemGroup>
-        <DCCReference Include="Source\Workspace\ComicWorkspaceUI.pas"/>
-        <DCCReference Include="Source\Workspace\ComicWorkspaceBridge.pas"/>
-        <DCCReference Include="Source\Workspace\ComicWorkspaceGeneration.pas"/>
-        <DCCReference Include="Source\Workspace\ComicWorkspaceViewport.pas"/>
-        <DCCReference Include="Source\Workspace\ComicWorkspaceGeometry.pas"/>
-        <DCCReference Include="Source\Workspace\ComicWorkspaceInteraction.pas"/>
-        <DCCReference Include="Source\Workspace\ComicWorkspaceBalloons.pas"/>
-        <DCCReference Include="Source\Workspace\ComicWorkspaceEffects.pas"/>
         <DelphiCompile Include="$(MainSource)">
             <MainSource>MainSource</MainSource>
         </DelphiCompile>
+        <DCCReference Include="Source\Tests\Support\ComicTestSupport.pas"/>
         <DCCReference Include="Source\Shell\MangaMakerMainForm.pas">
             <Form>MainForm</Form>
         </DCCReference>

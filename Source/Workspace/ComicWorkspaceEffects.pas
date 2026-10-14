@@ -37,6 +37,7 @@ type
 procedure TComicWorkspaceEffectsHelper.ExecuteRefreshEffectMaterials;
 var Material: TComicEffectMaterial; At: Integer;
 begin
+  if FEffectPane<>nil then begin FEffectPane.Refresh; Exit; end;
   At:=FEffectList.ItemIndex; FEffectList.Items.BeginUpdate;
   try FEffectList.Clear; for Material in FEffectMaterials do FEffectList.Items.AddObject(Material.Name,Material);
     FEffectList.ItemIndex:=Max(0,Min(At,FEffectList.Count-1));
@@ -46,23 +47,10 @@ end;
 procedure RunWorkspaceRefreshEffectMaterials(Form: TMainForm);
 begin Form.ExecuteRefreshEffectMaterials; end;
 procedure TComicWorkspaceEffectsHelper.ExecuteEffectMaterials(Sender: TObject);
-var Dialog: TComicEffectDialog; Prepared,Previous: TObjectList<TComicEffectMaterial>;
 begin
-  if not FEffectLibraryWritable then begin
-    Prepared:=TObjectList<TComicEffectMaterial>.Create; SeedEffectMaterials(Prepared);
-    try
-      try
-        LoadEffectMaterials(Prepared,TPath.Combine(DataRoot,'Effects\Library.json'));
-        FEffectList.Items.Clear; Previous:=FEffectMaterials; FEffectMaterials:=Prepared; Prepared:=nil; Previous.Free; FEffectLibraryWritable:=True;
-        RefreshEffectMaterials;
-      except on E: Exception do FStatus.SimpleText:='効果素材ライブラリは読み取りのみです：'+E.Message; end;
-    finally Prepared.Free; end;
-  end;
-  Dialog:=TComicEffectDialog.CreateManager(Self,FEffectMaterials,FEffectLibraryWritable,TPath.Combine(DataRoot,'Effects\Library.json'),EffectLibraryChanged);
-  try Dialog.ShowModal; finally Dialog.Free; end;
-  RefreshEffectMaterials; FRenderer.ClearCache; FCanvas.Invalidate;
+  FModeButtons[4].Click; FEffectCategory.ItemIndex:=0; EffectCategoryChanged(nil);
+  if FEffectPane.GroupList.CanFocus then FEffectPane.GroupList.SetFocus;
 end;
-
 procedure RunWorkspaceEffectMaterials(Form: TMainForm; Sender: TObject);
 begin Form.ExecuteEffectMaterials(Sender); end;
 procedure TComicWorkspaceEffectsHelper.ExecuteEffectLibraryChanged(Sender: TObject);
@@ -76,16 +64,22 @@ begin CancelDrag; FEffectIndex:=-1; FEffectPages.ActivePageIndex:=FEffectCategor
 procedure RunWorkspaceEffectCategoryChanged(Form: TMainForm; Sender: TObject);
 begin Form.ExecuteEffectCategoryChanged(Sender); end;
 procedure TComicWorkspaceEffectsHelper.ExecuteDrawEffectItem(Control: TWinControl; Index: Integer; Rect: TRect; State: TOwnerDrawState);
-var R: TRect; Material: TComicEffectMaterial; C: TCanvas; X,Y,Step: Integer;
+var R,TextRect: TRect; Material: TComicEffectMaterial; C: TCanvas; X,Y,Step: Integer;
+  function D(Value: Integer): Integer; begin Result:=MulDiv(Value,CurrentPPI,96); end;
 begin
   C:=FEffectList.Canvas; C.Brush.Color:=$302B28; C.FillRect(Rect); Material:=TComicEffectMaterial(FEffectList.Items.Objects[Index]);
-  Step:=MulDiv(8,CurrentPPI,96); R:=System.Types.Rect(Rect.Left+8,Rect.Top+6,Rect.Right-8,Rect.Top+MulDiv(84,CurrentPPI,96));
+  // 4:3のプレビューを左に固定し、一覧幅が変わっても名称欄を画像の右に確保する。
+  Step:=D(8); R:=System.Types.Rect(Rect.Left+D(8),Rect.Top+D(8),Rect.Left+D(120),Rect.Top+D(92));
   Y:=R.Top;
   while Y<R.Bottom do begin X:=R.Left; while X<R.Right do begin
     if (((X-R.Left) div Step+(Y-R.Top) div Step) mod 2)=0 then C.Brush.Color:=clWhite else C.Brush.Color:=$CCCCCC;
     C.FillRect(System.Types.Rect(X,Y,Min(R.Right,X+Step),Min(R.Bottom,Y+Step))); Inc(X,Step); end; Inc(Y,Step); end;
+  // 壊れた素材でも名称と透明領域の下地を残し、一覧の選択を継続できるようにする。
   try FRenderer.DrawOverlay(C,EffectMaterialPath(Material),R); except end;
-  C.Font.Color:=clWhite; C.Brush.Style:=bsClear; C.TextOut(Rect.Left+8,R.Bottom+4,Material.Name); C.Brush.Style:=bsSolid;
+  TextRect:=System.Types.Rect(R.Right+D(12),Rect.Top+D(18),Rect.Right-D(8),Rect.Bottom-D(8));
+  C.Font.Assign(FEffectList.Font); C.Font.Color:=clWhite; C.Brush.Style:=bsClear;
+  DrawText(C.Handle,PChar(Material.Name),Length(Material.Name),TextRect,DT_WORDBREAK or DT_NOPREFIX or DT_END_ELLIPSIS);
+  C.Brush.Style:=bsSolid;
   if odSelected in State then begin C.Brush.Style:=bsClear; C.Pen.Color:=$E5B45B; C.Rectangle(Rect); C.Brush.Style:=bsSolid; end;
 end;
 

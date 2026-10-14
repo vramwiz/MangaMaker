@@ -13,7 +13,7 @@ uses Winapi.Windows, Winapi.Messages, Winapi.ShellAPI, Winapi.Imm,
   Vcl.Dialogs, Vcl.Graphics, Vcl.Imaging.pngimage, ComicModel,
   ComicAssetDialog, ComicLayouts, ComicExport, ComicEditingTests,
   ComicGeometryTests, ComicTextTests, ComicBalloonsTests, ComicAssetsTests,
-  ComicIntegrationTests, ComicLibrariesTests, ComicRenderingTests, ComicWorkspaceTests;
+  ComicIntegrationTests, ComicLibrariesTests, ComicRenderingTests, ComicWorkspaceTests, ComicMaterialPaneTests;
 type
   TComicSelfTestHelper = class helper for TComicTestForm
     procedure Execute;
@@ -250,6 +250,16 @@ begin
     finally Dialog.Free; end;
     FProject.Save; FDirty:=False;
     RunViewportChecks(Self);
+    RunMaterialPaneChecks(Self);
+    FModeButtons[4].Click; FEffectCategory.ItemIndex:=0; EffectCategoryChanged(nil);
+    Capture('window-materials-96');
+    Check(FEffectList.Height>FEffectList.ItemHeight*2,'integrated material pane leaves space for thumbnails');
+    // 非表示フォームを描画しても実モニターの96PPIへ戻らないよう、拡縮後は自動調整を止める。
+    Scaled:=True; ScaleForPPI(144); Scaled:=False; Capture('window-materials-144');
+    Check((CurrentPPI=144) and (FEffectList.Height>=FEffectList.ItemHeight) and
+      (FEffectList.Top>=FEffectPane.GroupList.Top+FEffectPane.GroupList.Height),
+      'material pane scales without overlapping groups or clipping its first thumbnail row');
+    Scaled:=True; ScaleForPPI(96);
     Lines.Add('PASS: hidden VCL captures, no external generation or transmission.');
     TFile.WriteAllText(TPath.Combine(TestFolder,'result.txt'),Lines.Text,TEncoding.UTF8);
   finally Lines.Free; B.Free; end;

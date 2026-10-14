@@ -11,7 +11,7 @@ uses Winapi.Windows, Winapi.Messages, Winapi.ShellAPI, Winapi.Imm,
   System.Hash, System.DateUtils, Vcl.Controls, Vcl.Forms,
   Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.ComCtrls, Vcl.Menus,
   Vcl.Dialogs, Vcl.Graphics, Vcl.Imaging.pngimage, ComicLayouts,
-  ComicIconButton;
+  ComicIconButton, ComicEffectPane;
 type
   TComicWorkspaceUIHelper = class helper for TMainForm
     procedure BuildWorkspaceUI;
@@ -195,11 +195,9 @@ begin
   FEffectCategory.Style:=csDropDownList; FEffectCategory.Items.AddStrings(['効果素材','フィルター','枠装飾']); FEffectCategory.ItemIndex:=0; FEffectCategory.OnChange:=EffectCategoryChanged;
   FEffectPages:=TPageControl.Create(Self); FEffectPages.Parent:=Tab; FEffectPages.Align:=alClient;
   Tab:=TTabSheet.Create(Self); Tab.PageControl:=FEffectPages; Tab.Caption:='効果素材'; Tab.TabVisible:=False;
-  P:=TPanel.Create(Self); P.Parent:=Tab; P.Align:=alTop; P.Height:=D(108); P.BevelOuter:=bvNone;
-  Icon(P,'効果素材を管理',10,8,270,36,ciRegister,0,brAlways,EffectMaterials,True);
-  Icon(P,'選択した効果素材を削除',10,54,270,36,ciDelete,0,brDeleteEffect,DeleteEffect,True);
-  FEffectList:=TListBox.Create(Self); FEffectList.Parent:=Tab; FEffectList.Align:=alClient; FEffectList.Style:=lbOwnerDrawFixed;
-  FEffectList.ItemHeight:=D(116); FEffectList.OnDrawItem:=DrawEffectItem; FEffectList.DragMode:=dmAutomatic; RefreshEffectMaterials;
+  FEffectPane:=TComicEffectPane.CreatePane(Self,Tab,FEffectMaterials,FEffectLibraryWritable,EffectLibraryChanged);
+  FEffectPane.Align:=alClient; FEffectList:=FEffectPane.MaterialList;
+  FEffectList.ItemHeight:=D(104); FEffectList.OnDrawItem:=DrawEffectItem; RefreshEffectMaterials;
   Tab:=TTabSheet.Create(Self); Tab.PageControl:=FEffectPages; Tab.Caption:='フィルター'; Tab.TabVisible:=False; Body:=Scrolling(Tab);
   LabelAt(Body,'中央のコマを選び、種類と強度を反映します。',12,10);
   FFilterKind:=TComboBox.Create(Self); FFilterKind.Parent:=Body; FFilterKind.SetBounds(D(12),D(68),D(166),D(28)); FFilterKind.Style:=csDropDownList;

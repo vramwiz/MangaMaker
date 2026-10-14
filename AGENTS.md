@@ -20,6 +20,7 @@
 - 最新ユーザー指示により1ユニット1500行程度を目安とする。1メソッド50行、1フォルダー5～8ユニットは引き継ぐ。行数以内でも責務の混在を確認する。
 - `Source/Shell` はフォームの状態管理・ライフサイクル・イベント入口、`Source/Workspace` は各編集機能の処理を担当する。独立したモデルや計算処理はそれぞれの機能フォルダーへ置く。
 - モデルは `Model`、描画は `Rendering`、編集計算は `Editing`、文字/IMEは `Text`、管理画面は `Dialogs`、外部連携は `Integration`、出力は `Export`、共通コントロールは `Controls`、計測は `Diagnostics` に配置する。
+- 共通効果素材の分類・登録は `Materials` に配置し、素材パネルやCodex通信と責務を分ける。
 - 自己検証は `Source/Tests` に分野別で置き、フォームへ検証コードを戻さない。`-SelfTest` 指定時だけ `MANGAMAKER_SELFTEST` を定義して組み込む。
 - `Tools/CheckSourceLayout.ps1` をビルド前に実行する。1ユニット1500行、1フォルダー8ユニットを上限とする。上限に達したら責務で分離し、空行削除や巨大なincludeファイルで回避しない。
 

@@ -14,7 +14,7 @@ uses Winapi.Windows, Winapi.Messages, Winapi.ShellAPI, Winapi.Imm,
   ComicEditing, ComicIconButton, ComicTextInput, ComicPagePresets,
   ComicPageDialog, ComicPanelTransform, ComicFontHistory, ComicGenerationPresets,
   ComicGenerationDialog, ComicBridge, ComicAssetEditing, ComicEffects,
-  ComicRecentProjects, ComicExportDialog, ComicProjectDialog, ComicCodexTransport;
+  ComicRecentProjects, ComicExportDialog, ComicProjectDialog, ComicCodexTransport, ComicEffectPane;
 
 type
   TComicPaintBox = class(TPaintBox)
@@ -52,6 +52,7 @@ type
     FEffectPages: TPageControl;
     FEffectCategory: TComboBox;
     FEffectList: TListBox;
+    FEffectPane: TComicEffectPane;
     FFilterKind,FFilterStrength,FFrameKind,FPanelBorderWidth: TComboBox;
     FPanelBorderColor: TColor;
     FEffectIndex: Integer;
@@ -343,7 +344,7 @@ begin
 end;
 destructor TMainForm.Destroy;
 // タイマーと所有する生成要求を先に止め、遅延コールバックが解放済みのUI・作品へ触れないようにする。
-begin if FGenerationTimer<>nil then FGenerationTimer.Enabled:=False; CancelGeneration(nil); FGenerationJobs.Free; FGenerationJobs:=nil; if FView<>nil then FView.OnCaptureLost:=nil; EndViewPan(False); FBridge.Free; FProject.Free; FCharacters.Free; FRenderer.Free; FUndo.Free; FRedo.Free; FLayouts.Free; FPagePresets.Free; FFontHistory.Free; FGenerationPresets.Free; FEffectMaterials.Free; FRecent.Free; FIconButtons.Free; FGeometryPoints.Free; FSelectedPanels.Free; inherited; end;
+begin FreeAndNil(FEffectPane); FEffectList:=nil; if FGenerationTimer<>nil then FGenerationTimer.Enabled:=False; CancelGeneration(nil); FGenerationJobs.Free; FGenerationJobs:=nil; if FView<>nil then FView.OnCaptureLost:=nil; EndViewPan(False); FBridge.Free; FProject.Free; FCharacters.Free; FRenderer.Free; FUndo.Free; FRedo.Free; FLayouts.Free; FPagePresets.Free; FFontHistory.Free; FGenerationPresets.Free; FEffectMaterials.Free; FRecent.Free; FIconButtons.Free; FGeometryPoints.Free; FSelectedPanels.Free; inherited; end;
 procedure TMainForm.BridgeRequest(const Request: string; out Reply: string);
 begin HandleWorkspaceBridge(Self,Request,Reply); end;
 procedure TMainForm.RefreshEffectMaterials;
