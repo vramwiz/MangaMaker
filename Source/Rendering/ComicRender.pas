@@ -4,18 +4,18 @@
 interface
 uses Winapi.Windows, System.SysUtils, System.Types, System.Math,
   System.Generics.Collections, System.IOUtils, Vcl.Graphics, Vcl.Imaging.pngimage,
-  Vcl.Imaging.jpeg, ComicModel, ComicTextLayout, ComicEffects, ComicFilters;
+  Vcl.Imaging.jpeg, ComicModel, ComicTextLayout, ComicEffects, ComicFilters, ComicOverlayDrawing;
 type
   TComicRenderer = class
   private
     FCache: TObjectDictionary<string,TBitmap>;
-    FOverlayCache: TObjectDictionary<string,TPngImage>;
+    FOverlayCache: TComicOverlayImages;
     FFilteredCache: TObjectDictionary<string,TBitmap>;
     FFilteredBytes: UInt64;
     function Image(const FileName: string): TBitmap;
     function FilteredPanel(Project: TComicProject; Panel: TComicPanel; Img: TBitmap; out Crop: TRect; out Owned: Boolean): TBitmap;
   public
-    procedure DrawOverlay(Canvas: TCanvas; const FileName: string; const Target: TRect);
+    procedure DrawOverlay(Canvas: TCanvas; const FileName: string; const Target: TRect; Angle: Double=0);
     constructor Create;
     destructor Destroy; override;
     procedure ClearCache;
@@ -24,7 +24,7 @@ type
     function ImageBounds(Project: TComicProject; Panel: TComicPanel): TRectF;
     function BalloonTextBounds(Balloon: TComicBalloon): TRectF;
     procedure Draw(C: TCanvas; Project: TComicProject; Page: TComicPage;
-      const Target: TRect; Guides: Boolean);
+      const Target: TRect; Guides: Boolean; BalloonPreview: TComicBalloon=nil);
     procedure ExportPage(Project: TComicProject; Page: TComicPage; const FileName: string);
   end;
 function ShapeRegion(const R: TRect; Shape: Integer): HRGN;
@@ -148,7 +148,7 @@ begin
   try ExtSelectClipRgn(C.Handle,G,RGN_AND); finally DeleteObject(G); end;
 end;
 constructor TComicRenderer.Create;
-begin inherited; FCache:=TObjectDictionary<string,TBitmap>.Create([doOwnsValues]); FOverlayCache:=TObjectDictionary<string,TPngImage>.Create([doOwnsValues]);
+begin inherited; FCache:=TObjectDictionary<string,TBitmap>.Create([doOwnsValues]); FOverlayCache:=TComicOverlayImages.Create([doOwnsValues]);
   FFilteredCache:=TObjectDictionary<string,TBitmap>.Create([doOwnsValues]); end;
 destructor TComicRenderer.Destroy;
 begin FFilteredCache.Free; FOverlayCache.Free; FCache.Free; inherited; end;
@@ -183,16 +183,16 @@ begin
     end;
   except Result.Free; Result:=nil; Owned:=False; raise; end;
 end;
-procedure TComicRenderer.DrawOverlay(Canvas: TCanvas; const FileName: string; const Target: TRect);
+procedure TComicRenderer.DrawOverlay(Canvas: TCanvas; const FileName: string; const Target: TRect; Angle: Double);
 {$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
-var PNG: TPngImage;
+var Image: TComicOverlayImage;
 begin
   {$IFDEF DEBUG}PerfScope.Start(cpOverlayDraw);{$ENDIF}
   if not FileExists(FileName) then Exit;
-  if not FOverlayCache.TryGetValue(FileName,PNG) then begin PNG:=TPngImage.Create;
-    try PNG.LoadFromFile(FileName); FOverlayCache.Add(FileName,PNG); except PNG.Free; raise; end;
+  if not FOverlayCache.TryGetValue(FileName,Image) then begin Image:=TComicOverlayImage.Create(FileName);
+    try FOverlayCache.Add(FileName,Image); except Image.Free; raise; end;
   end;
-  Canvas.StretchDraw(Target,PNG);
+  Image.Draw(Canvas,Target,Angle);
 end;
 function TComicRenderer.ImageBounds(Project: TComicProject; Panel: TComicPanel): TRectF;
 var B: TBitmap; Cover,W,H: Double;
@@ -241,8 +241,10 @@ begin
       Max(1,Round(Balloon.Bounds.Bottom)-Round(Balloon.Bounds.Top)-36));
   end else Area:=Rect(0,0,Round(Balloon.TextLayoutSize.cx),Round(Balloon.TextLayoutSize.cy));
   Canvas.Font.Name:=Balloon.FontFamily; Canvas.Font.Height:=-BaseFont; Canvas.Font.Style:=Balloon.FontStyle; Canvas.Font.Color:=Balloon.FontColor;
-  Layout.Build(Canvas,Balloon.Text,Area,Balloon.Vertical); Bounds:=Layout.Bounds;
-  Layout.Translate(-(Bounds.Left+Bounds.Right) div 2,-(Bounds.Top+Bounds.Bottom) div 2);
+  Layout.Build(Canvas,Balloon.Text,Area,Balloon.Vertical,Balloon.AutoWrap);
+  Layout.ApplySpacing(Balloon.CharacterSpacing,Balloon.LineSpacing,Balloon.Vertical); Bounds:=Layout.Bounds;
+  if Layout.Cells.Count=0 then Layout.Translate(-Layout.Stops[0].Point.X,-Layout.Stops[0].Point.Y)
+  else Layout.Translate(-(Bounds.Left+Bounds.Right) div 2,-(Bounds.Top+Bounds.Bottom) div 2);
   Result:=Balloon.FontSize/BaseFont;
 end;
 procedure TComicRenderer.PrimeImage(const FileName: string; Bitmap: TBitmap);
@@ -268,10 +270,10 @@ begin
   finally P.Free; end;
 end;
 procedure TComicRenderer.Draw(C: TCanvas; Project: TComicProject; Page: TComicPage;
-  const Target: TRect; Guides: Boolean);
+  const Target: TRect; Guides: Boolean; BalloonPreview: TComicBalloon);
 {$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
 var S: Double; P: TComicPanel; B: TComicBalloon; R,D: TRect;
-  G: HRGN; Saved, PageDC: Integer; Img: TBitmap; Overlay: TComicOverlay; FileName: string;
+  G: HRGN; Saved, PageDC: Integer; Img: TBitmap; Overlay: TComicOverlay; FileName: string; PreviewDrawn: Boolean;
   function Map(const A: TRectF): TRect;
   begin Result:=Rect(Target.Left+Round(A.Left*S),Target.Top+Round(A.Top*S),
     Target.Left+Round(A.Right*S),Target.Top+Round(A.Bottom*S)); end;
@@ -319,7 +321,7 @@ var S: Double; P: TComicPanel; B: TComicBalloon; R,D: TRect;
         if P.FrameKind=1 then begin
           Inner:=CreateRectRgn(0,0,0,0); Shifted:=CreateRectRgn(0,0,0,0);
           try
-            CombineRgn(Inner,G,0,RGN_COPY); Distance:=Max(2,Round((P.BorderWidth+8)*S));
+            CombineRgn(Inner,G,0,RGN_COPY); Distance:=Max(2,Round((P.BorderWidth+P.FrameGap)*S));
             Directions[0]:=Point(Distance,0); Directions[1]:=Point(-Distance,0); Directions[2]:=Point(0,Distance); Directions[3]:=Point(0,-Distance);
             Directions[4]:=Point(Distance,Distance); Directions[5]:=Point(-Distance,Distance); Directions[6]:=Point(Distance,-Distance); Directions[7]:=Point(-Distance,-Distance);
             for Insets in Directions do begin CombineRgn(Shifted,G,0,RGN_COPY); OffsetRgn(Shifted,Insets.X,Insets.Y); CombineRgn(Inner,Inner,Shifted,RGN_AND); end;
@@ -334,6 +336,7 @@ var S: Double; P: TComicPanel; B: TComicBalloon; R,D: TRect;
   var Owner,Candidate: TComicPanel; Layout: TComicTextLayout; Cell: TComicTextCell; TextScale,CX,CY: Double; CellBounds: TRect;
   begin
     {$IFDEF DEBUG}LocalPerf.Start(cpBalloonDraw);{$ENDIF}
+    if (BalloonPreview<>nil) and (A.ID=BalloonPreview.ID) then begin A:=BalloonPreview; PreviewDrawn:=True; end;
     Saved:=SaveDC(C.Handle);
     try
       if not A.Overflow then begin
@@ -370,7 +373,7 @@ var S: Double; P: TComicPanel; B: TComicBalloon; R,D: TRect;
   end;
 begin
   {$IFDEF DEBUG}PerfScope.Start(cpRender);{$ENDIF}
-  S:=Target.Width/Project.Width; PageDC:=SaveDC(C.Handle);
+  S:=Target.Width/Project.Width; PreviewDrawn:=False; PageDC:=SaveDC(C.Handle);
   try
     IntersectClipRect(C.Handle,Target.Left,Target.Top,Target.Right,Target.Bottom);
     C.Brush.Color:=clWhite; C.FillRect(Target);
@@ -383,7 +386,7 @@ begin
         for Overlay in P.Overlays do begin
           if Overlay.FileName='' then FileName:=SafeChild(TPath.Combine(DataRoot,'Effects'),Overlay.MaterialID+'.png')
           else FileName:=SafeChild(Project.Folder,Overlay.FileName);
-          DrawOverlay(C,FileName,Map(OverlayBounds(P,Overlay)));
+          DrawOverlay(C,FileName,Map(OverlayBounds(P,Overlay)),Overlay.Rotation);
         end;
       finally RestoreDC(C.Handle,Saved); C.Refresh; end;
       PanelFrame;
@@ -398,6 +401,8 @@ begin
     end;
     for B in Page.Balloons do if not B.Overflow then Balloon(B);
     for B in Page.Balloons do if B.Overflow then Balloon(B);
+    // 新規配置は追加描画、文字・しっぽ編集は同じIDの本体を差し替える。作品へは登録しない。
+    if (BalloonPreview<>nil) and not PreviewDrawn then Balloon(BalloonPreview);
     if Guides then begin
       C.Pen.Color:=$C5A26C; C.Pen.Style:=psDot; C.Pen.Width:=1; C.Brush.Style:=bsClear;
       C.Rectangle(Map(Project.PageBasis.Frame));

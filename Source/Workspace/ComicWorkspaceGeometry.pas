@@ -2,7 +2,9 @@
 
 // 責務：コマの作成・頂点編集・帯分割を扱い、不正な形を確定させない。
 interface
-uses MangaMakerMainForm, System.Types, ComicModel;
+uses MangaMakerMainForm, System.Types, System.Classes, ComicModel;
+procedure RunWorkspacePlacementDown(Form: TMainForm; const P: TPointF; Shift: TShiftState);
+procedure RunWorkspacePlacementUp(Form: TMainForm; const P: TPointF; Shift: TShiftState);
 function RunWorkspaceVertexHandles(Form: TMainForm; Panel: TComicPanel): TArray<TPointF>;
 function RunWorkspaceHitVertex(Form: TMainForm; Panel: TComicPanel; const P: TPointF): Integer;
 procedure RunWorkspaceEditVertexContext(Form: TMainForm; const P: TPointF);
@@ -10,11 +12,13 @@ procedure RunWorkspacePreservePanelImage(Form: TMainForm; Panel: TComicPanel; co
 procedure RunWorkspaceResetGeometryInput(Form: TMainForm);
 function RunWorkspaceSnapCreationPoint(Form: TMainForm; const P: TPointF; const ExcludePanelID: string): TPointF;
 function RunWorkspaceSnapPanelDragBounds(Form: TMainForm; const Bounds: TRectF): TRectF;
+function WorkspaceSnapTolerance(Form: TMainForm): Double;
+procedure RunWorkspaceDrawImageSnapGuides(Form: TMainForm);
 procedure RunWorkspacePolygonClick(Form: TMainForm; const P: TPointF);
 procedure RunWorkspaceSplitClick(Form: TMainForm; const P: TPointF);
 procedure RunWorkspaceCommitSplit(Form: TMainForm; Index: Integer);
 implementation
-uses Winapi.Windows, Winapi.Messages, Winapi.ShellAPI, Winapi.Imm, System.SysUtils, System.Classes, System.UITypes, System.Math, System.IOUtils, System.Generics.Collections, System.JSON, System.Hash, System.DateUtils, Vcl.Controls, Vcl.Forms, Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.ComCtrls, Vcl.Menus, Vcl.Dialogs, Vcl.Graphics, Vcl.Imaging.pngimage, ComicGeometry, ComicEffects, ComicGapSnap;
+uses Winapi.Windows, Winapi.Messages, Winapi.ShellAPI, Winapi.Imm, System.SysUtils, System.UITypes, System.Math, System.IOUtils, System.Generics.Collections, System.JSON, System.Hash, System.DateUtils, Vcl.Controls, Vcl.Forms, Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.ComCtrls, Vcl.Menus, Vcl.Dialogs, Vcl.Graphics, Vcl.Imaging.pngimage, ComicGeometry, ComicEffects, ComicGapSnap;
 type
   TComicWorkspaceGeometryHelper = class helper for TMainForm
     function ExecuteVertexHandles(Panel: TComicPanel): TArray<TPointF>;
@@ -27,7 +31,94 @@ type
     procedure ExecutePolygonClick(const P: TPointF);
     procedure ExecuteSplitClick(const P: TPointF);
     procedure ExecuteCommitSplit(Index: Integer);
+    function SnapTolerance: Double;
+    procedure DrawImageSnapGuides;
+    function PlacementPoint(const P: TPointF; Shift: TShiftState): TPointF;
+    procedure CommitPlacement(const P: TPointF);
+    procedure PlacementDown(const P: TPointF; Shift: TShiftState);
+    procedure PlacementUp(const P: TPointF; Shift: TShiftState);
   end;
+function TComicWorkspaceGeometryHelper.PlacementPoint(const P: TPointF; Shift: TShiftState): TPointF;
+begin
+  Result:=P; if (FTool in [1,2,3]) and not (ssAlt in Shift) then Result:=SnapCreationPoint(P);
+end;
+procedure TComicWorkspaceGeometryHelper.CommitPlacement(const P: TPointF);
+var R: TRectF; Balloon: TComicBalloon; Panel: TComicPanel; OwnerIndex: Integer;
+begin
+  if Hypot(P.X-FStart.X,P.Y-FStart.Y)*FScale<MulDiv(6,CurrentPPI,96) then begin FFirst:=False; Exit; end;
+  if FTool in [7,11] then begin TailClick(P); FFirst:=False; Exit; end;
+  R:=TRectF.Create(Min(P.X,FStart.X),Min(P.Y,FStart.Y),Max(P.X,FStart.X),Max(P.Y,FStart.Y));
+  FFirst:=False; if (R.Width<30) or (R.Height<30) then Exit;
+  Checkpoint;
+  if FTool in [1,2,3] then begin
+    Panel:=TComicPanel.Create; Panel.Bounds:=R; Panel.Shape:=FTool-1; Panel.Number:=Page.Panels.Count+1;
+    Page.Panels.Add(Panel); SelectSinglePanel(Page.Panels.Count-1);
+  end else begin
+    Balloon:=TComicBalloon.Create; Balloon.Bounds:=R; Balloon.Contour:=TComicBalloonContour(Max(0,FContour.ItemIndex));
+    Balloon.FontFamily:=FLastFontFamily; Balloon.FontSize:=FFontHistory.LastSize;
+    if FTool=10 then Balloon.Shape:=0 else Balloon.Shape:=FTool-4;
+    OwnerIndex:=HitPanel(FStart); if OwnerIndex>=0 then Balloon.PanelID:=Page.Panels[OwnerIndex].ID;
+    FPanelIndex:=-1;
+    Page.Balloons.Add(Balloon); FBalloonIndex:=Page.Balloons.Count-1; LoadBalloonControls(Balloon);
+  end;
+  Changed;
+end;
+procedure TComicWorkspaceGeometryHelper.PlacementDown(const P: TPointF; Shift: TShiftState);
+var Q: TPointF;
+begin
+  if not (FTool in [7,11]) and (FImages.Count=0) then begin Notify('画像管理で画像を登録してください。'); Exit; end;
+  Q:=PlacementPoint(P,Shift);
+  if FFirst then CommitPlacement(Q)
+  else begin
+    if FTool in [7,11] then TailClick(Q)
+    else begin FStart:=Q; FLast:=Q; FFirst:=True; end;
+    FPlacementDragging:=FDragPlacementMenu.Checked and FFirst;
+    if FPlacementDragging and not FTesting then FCanvas.MouseCapture:=True;
+    if FFirst then begin
+      if FPlacementDragging then FStatus.SimpleText:='ドラッグして離すと配置。Escで取消。設定・管理で2点クリックへ切替。'
+      else FStatus.SimpleText:='2点目をクリックして配置。Escで取消。設定・管理でドラッグへ切替。';
+    end;
+  end;
+  FCanvas.Invalidate;
+end;
+procedure TComicWorkspaceGeometryHelper.PlacementUp(const P: TPointF; Shift: TShiftState);
+begin
+  if not FPlacementDragging then Exit;
+  FPlacementDragging:=False; FCanvas.MouseCapture:=False;
+  CommitPlacement(PlacementPoint(P,Shift)); FFirst:=False; FCanvas.Invalidate;
+end;
+procedure RunWorkspacePlacementDown(Form: TMainForm; const P: TPointF; Shift: TShiftState);
+begin Form.PlacementDown(P,Shift); end;
+procedure RunWorkspacePlacementUp(Form: TMainForm; const P: TPointF; Shift: TShiftState);
+begin Form.PlacementUp(P,Shift); end;
+function TComicWorkspaceGeometryHelper.SnapTolerance: Double;
+begin Result:=MulDiv(8,CurrentPPI,96)/Max(FScale,0.001); end;
+function WorkspaceSnapTolerance(Form: TMainForm): Double;
+begin Result:=Form.SnapTolerance; end;
+
+procedure TComicWorkspaceGeometryHelper.DrawImageSnapGuides;
+var C: TCanvas; Frame,Image: TRectF; Saved,OldWidth: Integer; OldStyle: TPenStyle; OldColor: TColor;
+  procedure Line(AX,AY,BX,BY: Single);
+  begin
+    C.MoveTo(FPageRect.Left+Round(AX*FScale),FPageRect.Top+Round(AY*FScale));
+    C.LineTo(FPageRect.Left+Round(BX*FScale),FPageRect.Top+Round(BY*FScale));
+  end;
+begin
+  if not FDragging or (FTabs.ActivePageIndex<>2) or not FSnap.Checked or
+    (FPanelIndex<0) or (FPanelIndex>=Page.Panels.Count) or not (FImageSnap.HasX or FImageSnap.HasY) then Exit;
+  Frame:=Page.Panels[FPanelIndex].Bounds; Image:=FImageSnap.Bounds;
+  C:=FCanvas.Canvas; Saved:=SaveDC(C.Handle); OldWidth:=C.Pen.Width; OldStyle:=C.Pen.Style; OldColor:=C.Pen.Color;
+  try
+    // 編集キャンバスだけに描き、ページ外・サムネイル・PNG出力へガイドを残さない。
+    IntersectClipRect(C.Handle,FPageRect.Left,FPageRect.Top,FPageRect.Right,FPageRect.Bottom);
+    C.Pen.Color:=$E060E0; C.Pen.Width:=1; C.Pen.Style:=psDot;
+    if FImageSnap.HasX then Line(FImageSnap.X,Min(Frame.Top,Image.Top),FImageSnap.X,Max(Frame.Bottom,Image.Bottom));
+    if FImageSnap.HasY then Line(Min(Frame.Left,Image.Left),FImageSnap.Y,Max(Frame.Right,Image.Right),FImageSnap.Y);
+  finally C.Pen.Color:=OldColor; C.Pen.Width:=OldWidth; C.Pen.Style:=OldStyle; RestoreDC(C.Handle,Saved); end;
+end;
+procedure RunWorkspaceDrawImageSnapGuides(Form: TMainForm);
+begin Form.DrawImageSnapGuides; end;
+
 function TComicWorkspaceGeometryHelper.ExecuteVertexHandles(Panel: TComicPanel): TArray<TPointF>;
 var Points: TArray<TPointF>; I,N,K: Integer; Direction,Q: TPointF; LengthValue,Step: Double;
 begin
@@ -142,7 +233,7 @@ var Tolerance,Best,BestEdge,DX,DY,Distance: Double; Panel: TComicPanel; Point,Q,
 begin
   Result:=P; if (Page=nil) or not FSnap.Checked then Exit;
   AxisPoint:=P; VertexPoint:=P; EdgePoint:=P;
-  Tolerance:=MulDiv(8,CurrentPPI,96)/Max(FScale,0.001); DX:=Tolerance+1; DY:=Tolerance+1; Best:=Tolerance+1; BestEdge:=Tolerance+1;
+  Tolerance:=SnapTolerance; DX:=Tolerance+1; DY:=Tolerance+1; Best:=Tolerance+1; BestEdge:=Tolerance+1;
   Axis(FProject.MarginLeft,FProject.MarginTop); Axis(FProject.Width-FProject.MarginRight,FProject.Height-FProject.MarginBottom);
   for Panel in Page.Panels do begin
     if Panel.ID=ExcludePanelID then Continue;
@@ -188,7 +279,7 @@ begin
     IDs:=[Page.Panels[FPanelIndex].ID];
   end;
   Frame:=TRectF.Create(FProject.MarginLeft,FProject.MarginTop,FProject.Width-FProject.MarginRight,FProject.Height-FProject.MarginBottom);
-  Result:=SnapPanelBounds(Page.Panels,Bounds,Frame,MulDiv(8,CurrentPPI,96)/Max(FScale,0.001),FDragHandle,IDs,MinimumWidth,MinimumHeight);
+  Result:=SnapPanelBounds(Page.Panels,Bounds,Frame,SnapTolerance,FDragHandle,IDs,MinimumWidth,MinimumHeight);
 end;
 
 function RunWorkspaceSnapPanelDragBounds(Form: TMainForm; const Bounds: TRectF): TRectF;

@@ -12,7 +12,7 @@ procedure RunWorkspaceViewWheel(Form: TMainForm; Sender: TObject; Shift: TShiftS
 function RunWorkspaceEmptyViewPoint(Form: TMainForm; const P: TPointF): Boolean;
 function RunWorkspaceToPage(Form: TMainForm; X,Y: Integer): TPointF;
 implementation
-uses Winapi.Windows, Winapi.Messages, Winapi.ShellAPI, Winapi.Imm, System.SysUtils, System.UITypes, System.Math, System.IOUtils, System.Generics.Collections, System.JSON, System.Hash, System.DateUtils, Vcl.Forms, Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.ComCtrls, Vcl.Menus, Vcl.Dialogs, Vcl.Graphics, Vcl.Imaging.pngimage, ComicModel, ComicRender, ComicEditing, ComicEffects
+uses Winapi.Windows, Winapi.Messages, Winapi.ShellAPI, Winapi.Imm, System.SysUtils, System.UITypes, System.Math, System.IOUtils, System.Generics.Collections, System.JSON, System.Hash, System.DateUtils, Vcl.Forms, Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.ComCtrls, Vcl.Menus, Vcl.Dialogs, Vcl.Graphics, Vcl.Imaging.pngimage, ComicModel, ComicRender, ComicEditing, ComicEffects, ComicOverlayTransform
   {$IFDEF DEBUG}, ComicPerformance{$ENDIF};
 type
   TComicWorkspaceViewportHelper = class helper for TMainForm
@@ -81,8 +81,9 @@ procedure RunWorkspaceEndViewPan(Form: TMainForm; Cancel: Boolean);
 begin Form.ExecuteEndViewPan(Cancel); end;
 procedure TComicWorkspaceViewportHelper.ExecuteViewCaptureLost(Sender: TObject);
 begin
+  FInlineSelecting:=False;
   if FViewPanning then EndViewPan(False);
-  if FDragging then CancelDrag;
+  if FDragging or FPlacementDragging then CancelDrag;
 end;
 
 procedure RunWorkspaceViewCaptureLost(Form: TMainForm; Sender: TObject);
@@ -97,7 +98,7 @@ begin
   if not FCanvas.ClientRect.Contains(P) then Exit;
   Handled:=True;
   // 押下中は座標系を固定し、ホイールによって編集中の位置が飛ばないようにする。
-  if FDragging or FViewPanning or (WheelDelta=0) then Exit;
+  if FDragging or FPlacementDragging or FViewPanning or FInlineSelecting or (WheelDelta=0) then Exit;
   UpdateViewport; Anchor:=ToPage(P.X,P.Y);
   Zoom:=EnsureRange(FViewZoom*Power(1.15,EnsureRange(WheelDelta/120.0,-32.0,32.0)),0.1,16.0);
   if SameValue(Zoom,FViewZoom,1E-9) then Exit;
@@ -145,7 +146,8 @@ begin
   if FTabs.ActivePageIndex=4 then begin
     Overlay:=SelectedEffect;
     if (FEffectCategory.ItemIndex=0) and (Overlay<>nil) and
-      (HitHandle(OverlayBounds(Page.Panels[FPanelIndex],Overlay),P,9/FScale)<>0) then Exit;
+      ((HitOverlayHandle(OverlayBounds(Page.Panels[FPanelIndex],Overlay),Overlay.Rotation,P,FScale,CurrentPPI)<>0) or
+      OverlayContains(OverlayBounds(Page.Panels[FPanelIndex],Overlay),Overlay.Rotation,P)) then Exit;
   end;
   Result:=True;
 end;

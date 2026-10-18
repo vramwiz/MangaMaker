@@ -1,4 +1,269 @@
 ﻿# MangaMaker 作業記録
+## 新規ページの初期寸法650×975とサイズプリセット（2026-10-18）
+
+- ユーザー指定のニコニコ漫画投稿サイズ650×975pxを新規作品の初期値へ変更。ComicModelのDefaultPageWidth/DefaultPageHeightをモデルと共通ページ基準プリセットで共有する。余白は従来の各60pxを維持し、保存済み作品の寸法と、旧JSONで寸法省略時の1200×1700フォールバックは変更しない。
+- 組込みプリセットは先頭650×975、従来1200×1700、1300×1950の3件。既存builtin-standardのIDを維持し、自作プリセットの登録・名前変更・削除・読込も維持する。ページ基準画面では現在の寸法と余白に一致する項目を初期表示し、画面を開くだけでは作品へ適用しない。「設定・管理 → ページ基準・共通プリセット」から選択できる。
+- 既存の座標・描画回帰が初期値へ暗黙に依存しないよう、Tests/SupportのCreateFixtureProjectで1200×1700を明示した。既存試験の83か所の作成をこの関数へ置換し、個別指定された寸法は引き続き各試験で適用する。ページ基準試験は組込み件数定数を使い、自作プリセットのインデックスと件数を調整した。
+- 追加のComicPageDefaultsTestsは実モデルから新規保存・再読込・650×975 PNG出力・既存1200×1700の保持・旧寸法省略JSON・3種類の選択確定・任意800×1200の登録再読込・取消・96/144 PPI表示を確認する。自己検証時だけ組み込み、通常版には試験用生成関数も含めない。
+- 開始前の全Source・通常EXE/res・README/note・Git差分はTestOutput/PageDefaults/Beforeへ保持。既存の未コミット変更を維持し、検証データはTestOutputへ隔離する。実作品・共通設定・同階層プロジェクトは変更せず、今回の読み取り参照はリポジトリ内のみ。
+- 最終Win64 Debug/Releaseは各4709件PASS（今回16件追加）、両build.ps1とも180秒以内に完了。CLIガード3件はすべてexit2、通常Releaseの検証/計測用DCUは0件。通常版・最終Release検証のヒントは既存ComicPlacementPreviewのH2077のみ。Debug完了後に試験内の未使用戻り値代入だけを除去し、Releaseで全件を再確認した（製品コードの変更なし）。85ユニットの構成制約、対象PascalのUTF-8 BOM、git diff --checkを確認した。
+- DebugはTestOutput/Verified/MangaMaker.exe、fixtureはTestOutput/233219b65a2e4b8f999982e94f3ccbe0。ReleaseはTestOutput/PageDefaults/ReleaseVerified/MangaMaker.exe、fixtureはTestOutput/73ed4a4d2a9040e782a471fc62e31d9f。debug.log/release.log/production.log、CLI結果、ソースハッシュと更新証跡はTestOutput/PageDefaults/verification.jsonへ記録。posting-page-preset-96.png/144.pngに選択画面を保存し、650×975の初期表示を目視確認した。実際の投稿サイトへのアップロードは行っていない。
+- 実行中のMangaMakerがないことと開始前EXEの一致を確認し、直下MangaMaker.exeを通常Releaseへ更新。SHA-256：5B8E67CE20521B500EC7AD275E9252885D85F161D1D6D6AACA2F482DC30CC887。開始前7351A3498ABFC9482543369A07F41329FAA8543B8EFB5227C05E329FBBF62BD4はBeforeへ保持し、resは開始前とバイト一致へ復元した。アプリの強制終了・自動起動、commit/pushなし。
+
+## ページ管理の差分更新と縮小画像の再利用（2026-10-18）
+
+- 編集確定のたびにRefreshUIがFPages/FImagesをClear→全項目追加していた処理を変更。Controls/ComicProjectLists.pasへ一覧の同期を分離し、ページIDの順序が同じなら項目・選択・スクロールを維持し、変化した行だけ背景消去なしで無効化する。通常編集ではBeginUpdate/EndUpdateも呼ばず、WM_SETREDRAWによる全行の再描画を避ける。ページ追加・削除・並べ替え・作品切替時だけ一覧を再構築し、同一作品の選択はIDで引き継ぐ。
+- 画像一覧も変更がなければ再構築しない。Undo/Redoでは同一IDのモデルオブジェクトが作り直されるため、古いポインターを参照せず、表示を保ってItems.Objectsだけを現行モデルへ差し替える。ファイル未取得の素材は従来どおり一覧から除外する。
+- Rendering/ComicPageThumbnails.pasへ縮小描画キャッシュを追加。ページID・描画内容・解像度・参照ファイルのパス/更新時刻/サイズで照合し、Revision/OutputRevisionだけの変更では失効しない。UndoによるRevisionの巻戻りや同じRevisionの別分岐、未確定変形の描画後の取消も内容比較で追従する。共通画像の更新は参照ページだけを失効し、同じパスの画像更新時は元画像キャッシュも破棄する。ファイル内容の全読み・ハッシュ計算は行わない。
+- 縮小画像は表示時にだけ生成し、最大64枚・32MiBでLRU管理する。画面外の変更は見える行を無効化せず、必要時に生成する。削除ページ・作品切替では不要なキャッシュを解放し、DPIによる縮小画像寸法の変更にも追従。Shellは既存のモデル寿命・イベント入口・状態管理を担当し、通常版へ試験用描画カウンターを組み込まない。
+- Tests/Interaction/ComicPageRefreshTests.pasで96/144 PPIの実一覧メッセージ（LB_RESETCONTENT/WM_SETREDRAW）、Windowsへ渡した無効化矩形、縮小描画回数、描画ピクセルと履歴を検証する。通常編集・セリフ即時編集・画面外・Undo/Redo/分岐・共有画像更新・並べ替え/追加/削除・未使用画像追加・出力メタ情報・解像度・LRU/メモリー制限を対象とする。非表示窓ではGetUpdateRectが無効化要求を保持しないため、実際のInvalidateRect引数を自己検証時だけControl内へ記録し、要求範囲と描画回数を組み合わせて確認する。Shellへ試験コードを戻さず、通常版からは記録を除外する。
+- 開始前の全Source・通常EXE/res・README/note・既存Git差分をTestOutput/PageRefresh/Beforeへ保持。既存の未コミット変更を維持し、検証データはTestOutput内へ隔離する。同階層プロジェクトは今回参照・変更していない。追加の読み取り参照はローカルDelphi標準ソースのVcl.StdCtrls.pas、Vcl.Controls.pas、System.Hash.pas（API宣言の確認）。
+- 最終Win64 Debug/Releaseは各4693件PASS（今回139件追加）、両build.ps1とも180秒以内に完了。12ページfixtureで通常編集時のLB_RESETCONTENT/WM_SETREDRAWは0回、サムネイル生成は変更した1枚だけ。共有画像更新は参照する2枚だけで、選択とスクロールも保持した。CLIガード3件はすべてexit2、通常Releaseの検証/計測用DCUは0件。既存ComicPlacementPreviewのH2077ヒント1件以外にビルドエラーなし。84ユニットの構成制約、対象PascalのUTF-8 BOM、git diff --checkを確認した。
+- DebugはTestOutput/Verified/MangaMaker.exe、fixtureはTestOutput/e718b9ceac594bcf9b44083880b92b13。ReleaseはTestOutput/PageRefresh/ReleaseVerified/MangaMaker.exe、fixtureはTestOutput/187e8623751c447484cb8ddd0d015a35。ログ・ソースハッシュ・CLI結果・通常EXE更新証跡はTestOutput/PageRefreshのdebug.log、release.log、production.log、verification.jsonへ保存。page-refresh-96.png/144.pngで対象ページの縮小表示と複数選択/スクロールの維持を目視確認した。非表示VCLでの検証であり、実モニター上のちらつきの手操作計測とは区別する。
+- ユーザーの保存・終了の回答後、実行プロセスがないことと開始前EXEの一致を確認し、直下MangaMaker.exeを通常Releaseへ更新。SHA-256：7351A3498ABFC9482543369A07F41329FAA8543B8EFB5227C05E329FBBF62BD4。開始前EXE（A078D6C945A754502535E7A96FCD6BA461AFF0571E1D79592BD895BB494128B1）はBeforeへ保持し、resは開始前とバイト一致へ復元した。アプリの強制終了・自動起動、commit/pushなし。
+
+## 文字サイズの記憶と吹き出し編集のコマ選択禁止（2026-10-18）
+
+- 文字サイズ欄を選択専用から数値入力可能へ変更。1～1000の整数を一覧から選択・直接入力すると即時反映し、Presets/FontSize.jsonへ最後の指定値を保存する。吹き出し未選択でも次回の既定値を指定でき、再起動時の欄と新規配置へ引き継ぐ。未設定時は24。既存セリフの選択・読込・Undo・ドラッグ拡縮では明示指定の既定値を書き換えない。
+- 空の既存吹き出しへの直接入力は、最後のサイズを取消可能なプレビューへ適用し、文字確定時にサイズも保存する。既存セリフは自身の保存サイズを維持。空・非数・範囲外の入力では作品・履歴・既定値を変更しない。設定ファイルの破損・保存不能では既存ファイルを保持し、今回の起動中の指定は利用できる。
+- 吹き出し画面へ入るとコマ選択を解除し、コマの当たり判定から移動・拡縮へ進む経路と選択枠表示を止めた。古いコマ選択が残っていても押下時に除去する。コマ削除・画像D&Dからのコマ選択も同画面では行わない。吹き出し本体・セリフ・しっぽの操作と、新規吹き出しの所属コマ判定は維持する。
+- 回帰はSource/Tests/Interaction/ComicBalloonSelectionTests.pasへ分離。一覧・直接入力・再起動・旧セリフ・空文字プレビューの取消/確定・保存再読込・不正値/設定破損/保存失敗と、96/144 PPI・0.75/1.5倍でコマ本体/8点の誤操作防止・本体操作・入力からの枠選択・T・所属判定を検証する。既存入力試験が保存する文字サイズ設定も試験終了時に復元し、試験順への依存を避ける。
+- 開始前の全Source・通常EXE/res・README/note・Git差分はTestOutput/FontSizeSelection/Beforeへ退避。既存の未コミット変更を保持し、実作品・通常設定・同階層プロジェクトへ検証データを入れていない。今回の追加参照はリポジトリ内のみ。
+- Win64 Debug/Releaseは各4554件PASS（今回125件追加）。両build.ps1は180秒の待機上限を超えて終了したが、検証プロセスは継続し、終了後のresult.txtで全件PASSと末尾の完了報告を確認した。待機成功とは区別してverification.jsonに記録する。CLIガード3件はすべてexit2、通常Releaseの検証/計測用DCUは0件。ビルドエラーなし、既存ComicPlacementPreviewのH2077ヒント1件のみ。81ユニットの構成制約、対象PascalのUTF-8 BOMとgit diff --checkを確認した。
+- DebugはTestOutput/Verified/MangaMaker.exe、fixtureはTestOutput/773508b8e7034808b243273c50c4b33a。ReleaseはTestOutput/FontSizeSelection/ReleaseVerified/MangaMaker.exe、fixtureはTestOutput/d263d540813549aaad53d0646296699e。ログ・ソースハッシュ・CLI結果・更新証跡はTestOutput/FontSizeSelectionのdebug.log、release.log、production.log、verification.jsonへ保存。balloon-no-panel-selection.pngで古いコマ選択が残っていても編集点・選択枠が表示されないことを目視確認した。非表示VCLへのイベント通知での検証であり、物理マウス・IME候補の手操作は含まない。
+- 実行中のMangaMakerがないことと開始前EXEの一致を確認し、直下MangaMaker.exeを通常Releaseへ更新。SHA-256：DB2460B6F396D9E61AE34D2166D792EA45E1EC65464E1174D1BF41E3008D7553。開始前直下EXE（66484CD78BDA4699B42AE8C7330A9C06EE52281244D430938C499BCD5041C3B8）はBeforeへ保持し、resは開始前とバイト一致へ復元した。アプリの強制終了・自動起動、commit/pushは行わない。
+
+## コマ・画像の誤移動防止と素材D&Dの原寸/比率維持（2026-10-18）
+
+- 最新依頼に対応し、コマ本体と配置画像の移動だけに「250ms未満かつ6DIP未満」の保護を追加した。DPIに応じた画面距離を使用し、表示倍率に依存させない。時間または距離のどちらかを満たすと開始する。一度意図した移動として認識したジェスチャは、開始点へ近づいても継続する。未認識中はスナップも適用せず、短い手ぶれで配置・Draft・Dirty・Undo/Redoを変更しない。
+- 判定値はControls/ComicDragIntent.pasへ集約。Shellは押下Tickを保持し、WorkspaceInteractionが単体/複数コマ・画像の移動へだけ適用する。拡縮点・頂点・文字・しっぽ・素材の移動/回転と表示パンは従来の反応を維持する。小さく動かした後に長押ししたケースや最後のMouseMoveが省略されたケースもMouseUpで判定する。すでに処理した同じ終点は再計算せず、Altによるスナップ解除などの途中状態をMouseUpで上書きしない。
+- 漫画効果素材の新規D&DはPNGの実ピクセル寸法とコマ寸法を比較し、倍率min(1,コマ幅/PNG幅,コマ高さ/PNG高さ)で中央へ配置する。小さい素材は拡大せず、大きい素材だけアスペクト比を維持して収める。正規化したOverlay.Boundsへ保存し、既存の移動/比率維持拡縮/回転/Undo/再読込と共有する。既存配置の自動再配置や原本PNGのリサンプルは行わない。
+- 素材サイズ計算はComicEffects.FitEffectBoundsへ分離し、PNG寸法の検証後・作品への追加前に決定する。作品へのPNGコピーは従来どおり。旧素材回帰はコマ全体への引き伸ばしから原寸64×64の期待へ変更し、半透明画素の検証座標と拡縮時の元アスペクト比を更新した。
+- Tests/Interaction/ComicDragDropTestsは時計を待たず押下Tickを設定し、96/144 PPIと倍率0.75/1.5で短い手ぶれ、意図した微調整、素早い大移動、開始点付近への戻り、長押し後の離し、末端通知の省略、複数選択、既存Redoの保持、拡縮の即時性を検証する。素材は小型、横だけ過大、縦だけ過大、縦横過大、コマと同寸を実D&Dから検証し、原本ハッシュ・保存再読込・Undo/Redoも確認する。途中で発見した旧Alt解除試験への影響は同じMouseUp終点の再処理を避けることで修正した。
+- 作業前の通常EXE/res、全Source、README/note、既存Git差分はTestOutput/DragAndDrop/Beforeへ保持。実作品・共有設定・同階層プロジェクトを検証用に変更していない。
+
+- Win64 Debug/Releaseは各4429件PASS（今回358件追加）、両build.ps1は180秒以内に完了。CLIガード3件はすべてexit2、通常Releaseの検証/計測用DCUは0件。ビルドエラーなし、既存ComicPlacementPreviewのH2077ヒント1件のみ。80ユニットの構成制約、対象PascalのUTF-8 BOM、git diff --checkを確認した。既存の小移動スナップ試験は長押し済みの意図した操作として時刻を設定し、誤操作判定の試験と区別した。
+- DebugはTestOutput/Verified/MangaMaker.exe、fixtureはTestOutput/e22a83c80d9c437187ddb0b696bc237f。ReleaseはTestOutput/DragAndDrop/ReleaseVerified/MangaMaker.exe、fixtureはTestOutput/70d17ee6ed6d43349a5d63e21bfb85f8。material-fit-wide.pngで横長素材が縦長コマへ引き伸ばされず、中央に比率維持で収まることを目視確認した。全ログ・CLI結果・ソースハッシュ・更新証跡はTestOutput/DragAndDrop/verification.jsonとdebug.log/release.log/production.logに保存。操作は非表示VCLフォームへのイベント通知で検証し、実マウスの手ぶれ試験とは区別する。
+- 実行中のMangaMakerがないことと開始前EXEの一致を確認して直下MangaMaker.exeを通常Releaseへ更新。SHA-256：85643CE5AE00F24F8A453058C7B53BBA20A7325C6C15C76B05C5EC96E1768F21。開始前版07010D9F8183C133D00D2054A60A6B1208A5885AD2DB2C528536AF2C1EE68A1BはBeforeに保持し、resは開始前とバイト一致へ復元した。アプリの強制終了・自動起動、commit/pushなし。
+
+## ページ解像度変更時の中心基準・縦横同率拡縮（2026-10-18）
+
+- 最新依頼により「ページ基準の解像度を変えても既存座標を維持する」動作を変更。倍率はmin(新幅/旧幅,新高さ/旧高さ)、座標は新ページ中心＋(旧座標−旧ページ中心)×倍率。全ページのコマ・画像・吹き出し・しっぽ・効果をまとめて変換する。幅/高さ比が異なると全体を新ページ内へ収めて中央へ配置する。入力した外枠余白はそのまま適用し、余白だけの変更では配置を動かさない。
+- 独立計算・候補の検証はSource/Editing/ComicPageResize.pasへ分離。複製した作品上で全ページを変換し、保存JSONを再読込できることまで確認してからShellへ渡す。元作品を変更せずに不正な最小寸法・しっぽ・座標・線幅を検出する。Shell.ApplyPageBasisは成功後に1回のUndoを追加し、保存失敗では元の作品・Dirty・履歴を保持し、部分Draftの復元も試みる。適用前には未確定ドラッグを取消し、入力中の文字を従来どおり確定する。
+- コマは四角/楕円/角丸/多角形の全頂点と線幅を同率変換する。画像のCover倍率はコマ寸法へ追従するため、Zoomは保持しPanX/Yだけを同率変換して切り抜きを維持する。効果は正規化されたコマ内座標と回転角を保持することで、中心・縦横サイズが同率で追従する。原本画像・素材PNGは再サンプルしない。
+- 吹き出しは既存ApplyTransformの文字込み変形を使い、本体・相対文字位置・三角/思考しっぽの根元/先端/幅を一括変換。文字サイズは倍率に最も近い整数（既存の1～1000内）にする。既存の文字組版基準を保持し、未設定の組版基準は変更前の寸法・文字サイズで確保するため、自動/手動の改行と文字間隔/行間隔の比率を維持する。
+- 二重枠の固定8px間隔も同率で変えるためTComicPanel.FrameGapを保存（旧JSON省略時は8）。通常のコマ拡縮では従来どおり維持し、ページ解像度変更時だけ線幅と共に拡縮する。各ページのRevisionを1増やしOutputRevisionを無効化、renderer-16で出力の署名を更新。余白だけの変更では各ページのJSONと完成PNGキャッシュを保つ。
+- Source/Tests/Interaction/ComicPageResizeTests.pasで全2ページ・4形状・回転素材・三角/思考しっぽ・縦横文字・自動/手動改行、拡大/縮小/幅のみ/高さのみ/縦横比変更/端数サイズを検証。原本のハッシュ維持、画像の切抜き、2倍解像度での同じ表示寸法の画素一致、保存再読込、全ページUndo/Redo、同値の再適用、余白だけの変更、最小しっぽと保存ロックによる全体保持も確認する。従来PageBasis試験の期待を新しい半分の座標へ更新した。
+- 作業前のEXE/res、全Source、README/noteと既存Git差分はTestOutput/PageResize/Beforeへ保持。実作品・共有設定・同階層プロジェクトを検証用に変更しない。
+
+- Win64 Debug/Releaseは各4071件PASS（今回522件追加）、両build.ps1は180秒以内に完了。CLIガード3件はすべてexit2、通常Releaseに検証/計測用DCUは0件。ビルドエラーなし、既存ComicPlacementPreviewのH2077ヒント1件のみ。78ユニットの構成制約、対象PascalのUTF-8 BOM、git diff --checkも確認した。
+- DebugはTestOutput/Verified/MangaMaker.exe、fixtureはTestOutput/2797ad354b244a29a95fc5f98902c425。ReleaseはTestOutput/PageResize/ReleaseVerified/MangaMaker.exe、fixtureはTestOutput/d3cbc938d49042f4a94fc0fda2e0b4f1。2倍解像度で同じ表示寸法の完成画素が一致すること、端数倍率でも行/列数と画像の切抜きを維持すること、余白だけの変更ではページJSONが同一なことを確認した。全ログ・CLI結果・ソースハッシュ・更新証跡はTestOutput/PageResize/verification.jsonとdebug.log/release.log/production.logに保存。
+- 実行中のMangaMakerがないことと開始前EXEの一致を確認して、直下MangaMaker.exeを通常Releaseへ更新した。SHA-256：07010D9F8183C133D00D2054A60A6B1208A5885AD2DB2C528536AF2C1EE68A1B。開始前版645C29EF98BBA8A2225119EE56B5F40DC3E9213D894E670FFF87ED3E0D3E2B3DはBeforeに保持し、resは開始前とバイト一致へ復元。アプリの強制終了・自動起動、commit/pushなし。
+
+## 漫画効果の回転ハンドル（2026-10-18）
+
+- 最新依頼に対応し、効果素材の選択枠へ上辺中央から36DIP伸びる線、丸、曲線矢印の回転ハンドルを追加。ハンドルの描画・当たり判定は表示倍率によらずDPIに応じた画面サイズを維持する。枠と8点も回転へ追従し、回転ハンドルは手形、移動は移動、拡縮は向きに応じたカーソルになる。回転角はステータスへ表示し、Shiftで15度刻み。
+- TComicOverlay.Rotationを度数で保存する。旧JSONのrotation省略時は0度で、非有限値・360度を超える絶対値は読込時に拒否。マウス回転は中心から押下位置/現在位置への偏角差を開始角へ加え、-180〜180度へ正規化する。素材の中心・幅・高さ・原本PNGは回転で変更しない。
+- 計算はEditing/ComicOverlayTransform、選択枠はRendering/ComicEffectSelection、透明画像とGDI+用メモリストリームの寿命はRendering/ComicOverlayDrawingへ分離。WorkspaceEffectsへ効果のイベント処理を集め、Interactionは入口、Shellは開始角などの状態を担当する。傾いた拡縮はドラッグ差分を素材のローカル座標へ戻し、反対側の点をページ座標で固定する。回転ハンドルがコマ外でも空白パンへ渡さない。
+- 回転時だけGDI+で透明度を保って描画し、0度は従来のPNG描画経路を維持。メモリ上のPNGストリームを画像と同じ寿命で持ち、ファイルのロックを残さない。描画中のコマ/ページのクリップを引き継ぐ。DC原点はGDI+が引き継ぐため座標を二重に変換しない。途中検証で発見したPaintTo時の二重変換による位置ずれは修正した。完成描画/サムネイル/出力で同じ角度を使い、連番出力の署名をrenderer-15へ更新。
+- Tests/Interaction/ComicEffectRotationTestsで中心回転、正負・180度越え、Shift、8編集点の判定と固定点、角度JSON/旧形式、透明合成、楕円クリップ、移動したDC原点、原本の排他オープン、実連番PNG/キャッシュを検証。実フォームイベントは96/144 PPI・倍率0.75/1.5・開始角0/33/170度で、ホバー/ドラッグ/1回Undo/Redo/保存再読込/Esc/無移動クリックを検証する。
+- 読み取り参照：C:/Program Files (x86)/Embarcadero/Studio/37.0/source/rtl/win/Winapi.GDIPOBJ.pas（Graphics、DrawImage、SetClip、初期化・寿命）およびMicrosoft LearnのGraphics::SetClip(HRGN,CombineMode)（https://learn.microsoft.com/en-us/windows/win32/api/gdiplusgraphics/nf-gdiplusgraphics-graphics-setclip%28hrgn_combinemode%29）。参照元は変更していない。
+- 作業前の通常EXE/res、README/note、全Sourceと既存Git差分をTestOutput/EffectRotation/Beforeへ退避。既存の未コミット変更、実作品、共有素材を保持。検証の画面・作品・出力はTestOutput内だけで作る。
+
+- Win64 Debug/Releaseは各3549件PASS（今回追加の195件を含む）、両build.ps1は180秒以内に完了。CLIガード3件はすべてexit2、通常Releaseの検証/計測用DCUは0件。コンパイルエラーなし、既存ComicPlacementPreviewのH2077ヒント1件のみ。76ユニットの構成制約、対象PascalのUTF-8 BOM、git diff --checkを確認した。
+- DebugはTestOutput/Verified/MangaMaker.exe、fixtureはTestOutput/38f81fb025de4eabb1774dd7b9c75ae5。ReleaseはTestOutput/EffectRotation/ReleaseVerified/MangaMaker.exe、fixtureはTestOutput/766f4bfe8ac843a58f345af9aa5f9dcb。effect-rotation-handles.png、rotation-alpha-clip.png、rotation-clip-reference.png/rotation-clip-shifted.pngで丸と矢印・回転枠・透明合成・クリップ・DC原点を目視確認した。検証ログ、CLI結果、ソースハッシュと更新証跡はTestOutput/EffectRotation/verification.jsonと同フォルダーのdebug.log/release.log/production.logに保存。検証操作は非表示VCLフォームへのイベント通知で、実マウス操作とは区別する。
+- 実行中のMangaMakerがないことと開始前EXEの一致を確認し、直下MangaMaker.exeを通常Releaseへ更新。SHA-256：645C29EF98BBA8A2225119EE56B5F40DC3E9213D894E670FFF87ED3E0D3E2B3D。開始前版F92FF5CAC40663CD6DF750AC287C2508FF186DEA377C2A458BFA339EB2DEB36FはBeforeに保持し、resは開始前とバイト一致へ復元した。アプリの強制終了・自動起動、commit/pushなし。
+
+## 吹き出し配置の完成表示・入力時センタリングの訂正（2026-10-18）
+
+- 最新指示を優先し、前回記録した「吹き出し配置の白黒点線」と「入力開始位置の固定」を撤回した。吹き出し本体としっぽは配置中から完成時と同じ塗り・輪郭で描画する。コマの配置予告だけは従来の白黒点線を維持する。
+- ComicPlacementPreviewは新規本体、または選択本体を複製してしっぽを足した一時モデルを返す。ComicRender.Drawで新規本体を重ね、既存IDは同じ描画順で差し替える。本体としっぽの結合輪郭、色、太さ、所属コマのクリップを完成描画と共有し、ページ・Undo・保存・PNG出力へ予告モデルを登録しない。
+- ComicInlineTextの挿入原点固定と、それに伴うTextOffsetの自動補正を削除した。文字追加・削除・IME未確定・明示改行のたびに、完成表示と共通の中央揃えで組版する。手動で動かした相対位置と文字サイズは維持する。AutoWrap=falseは保持し、枠を超えても勝手に行・列を増やさず、Enterによる改行だけを採用する。旧作品の自動折り返しは読込だけでは変更せず、直接入力を開始して確定したセリフから手動改行へ移る。
+- 96/144 PPI、ドラッグ/2点クリック、全4輪郭、三角/思考しっぽで予告と配置確定後の画素比較を追加した。縦横入力・IME未確定・削除・明示改行でセンタリングと相対位置維持、自動折り返しなし、既存倍率、取消/Undo/保存再読込も検証する。画面キャプチャで実際の塗り・結合しっぽ・枠を超える1列の縦書きとキャレットを確認した。
+- 作業前のEXE/resと既存差分をTestOutput/CenteredPreview/Beforeへ退避。既存の開発差分と実作品を保持し、同階層プロジェクトの変更、強制終了・自動起動、commit/pushは行わない。検証結果・通常EXEの更新証跡は同フォルダーに記録した。
+
+- Win64 Debug/Releaseは各3354件PASS、build.ps1の180秒以内に終了し、CLIガード3件はすべてexit2。ビルドエラーなし（新規プレビュー作成の例外経路にH2077の未使用代入ヒント1件）。通常Releaseの検証/計測用DCUは0件。72ユニットの構成制約、対象PascalのUTF-8 BOM、git diff --checkも確認した。非表示VCLと模擬IME通知による検証であり、物理IME候補の手操作は含めない。
+- DebugはTestOutput/Verified/MangaMaker.exe、fixtureはTestOutput/9ee90311587d459788ee1e24c1336297。Releaseのビルド・fixture・ソースハッシュ・CLI結果はTestOutput/CenteredPreview/verification.jsonに記録し、debug.log/release.log/production.logも同フォルダーへ保存した。予告本体・結合しっぽ・センタリングのキャプチャは両fixtureのplacement-preview-5.png、placement-preview-7.png、inline-manual-overflow-caret.png。
+- 実行中のMangaMakerがないことと、作業前EXEの一致を確認し、直下MangaMaker.exeを通常Releaseへ更新した。SHA-256：F92FF5CAC40663CD6DF750AC287C2508FF186DEA377C2A458BFA339EB2DEB36F。開始前版3EDF31B3729D5CC9A5FBBA84D3FACF89D97727B6E617EC14EB3ED47832C2743CはBeforeに保持し、resも開始前とバイト一致へ戻した。アプリは自動起動していない。
+
+## ドラッグ配置・セリフ中心吸着・入力位置の固定（2026-10-18）
+
+- 本体選択Sでも、見えているセリフの内部をクリックするとセリフ選択T/Vへ移る。初回クリックだけでは入力に入らず、同じ押下からドラッグ移動できる。既存の縦横を維持し、本体の8点を優先する。小さな文字で編集点が重なる場合は最寄りの点を選び、編集点の間の内部を移動・入力へ残す。前面の不透明本体と所属コマのクリップも選択判定に考慮した。
+- 新規文字サイズは40から24へ変更し、サイズ一覧へ16・20・28も追加。旧作品の保存値と、fontSize省略時の従来値40は保持する。新規三角しっぽは従来の根元幅を2倍へ変更（上限2000）。思考しっぽと既存のしっぽは維持した。
+- セリフ移動時は実際の文字範囲の中心を、吹き出し本体の中心へ軸別に吸着させる。許容幅は8px×DPI/表示倍率、Altで一時解除、既存のスナップ設定と共通。吸着中だけマゼンタの中心点線を編集キャンバスへ重ね、終了・取消で消す。計算はComicDialogueTransform、状態はShell、描画とイベントはWorkspaceへ分担した。
+- 四角・楕円・角丸のコマと吹き出し、三角・思考しっぽの2点配置を既定でドラッグへ変更。「設定・管理 → 2点配置をドラッグで操作」のチェックを外せば2点クリックへ即時切替でき、保留中の予告は取消す。ドラッグ終端でだけ配置し、プレビューでは作品・Undoを変更しない。6px×DPI未満の距離、または本体の幅/高さが30ページpx未満なら配置しない。マウス捕捉喪失・Esc・画面切替でも取消し、ドラッグ中のホイールは座標系を変更しない。多角形・分割の多点操作は保持する。
+- 配置予告をSource/Rendering/ComicPlacementPreview.pasへ分離。最終描画と共通の本体・しっぽ領域を使い、輪郭を透明な内側と白黒の点線で表示する。編集中ページの範囲へクリップし、PNG出力に含めない。
+- 最新の回答「自動折り返しせず、Enterで改行したときだけ次の行・列へ進む」を採用した。新規モデルはautoWrap=false、旧JSONで省略時はtrue。直接入力開始時の最初の挿入位置を固定し、文字追加・IME未確定文字で原点や文字サイズを動かさない。枠を超えた文字はそのまま続け、明示改行だけで次の行・列へ移る。空文字のレイアウト原点を中央へ置き、入力前からキャレットを表示する。確定時は入力中の相対位置と組版の基準倍率を保存し、完成表示へ戻ったときの移動も防ぐ。旧自動折返しのセリフは読込時に維持し、直接入力を取消すと元へ戻り、確定したものから手動改行へ移る。専用入力も手動改行に対応し、レンダラー署名を14へ更新した。
+- 回帰はSource/Tests/Interaction/ComicPlacementTests.pasへ分離し、自己検証時だけ検索パスへ追加。既存の2点クリック検証は切替後の方式を明示し、描画ピクセルの期待がフォントに依存する輪郭試験は文字サイズ40のfixtureを明示した。開始前の通常EXE/resと差分はTestOutput/DialoguePolish/Beforeへ保持。既存の未コミット変更を維持し、実作品・通常設定・同階層プロジェクトを検証用に変更しない。
+- 最終Win64 Debug/Releaseは各3289件PASS、CLIガード3件はすべてexit2。通常Releaseもエラー・警告・ヒントなし、検証/計測用DCUは0件。新規相互操作試験では96/144 PPI、ドラッグ/2点クリック、8種類の配置、狭い配置の破棄、捕捉喪失と方式切替、白黒の予告、中心吸着/Alt解除/一時ガイド、直接クリック選択、空文字キャレット、枠を超える手動改行、旧折返しの取消、基準倍率維持、保存再読込を確認した。保存可能な相対座標を超えた場合も保存前に拒否し、作品と入力バッファを保つ。
+- 最終試験を並行実行した際は両構成ともbuild.ps1の180秒待ち時間を超えた。試験プロセス自体は継続し、終了後のresult.txtで各3289件とFAILなしを確認した。スクリプトの待機成功とは区別してverification.jsonにも記録する。途中版で見つかった空白クリックによるセリフ選択解除漏れは修正済み。物理IME候補操作・実モニター切替は未検証で、非表示VCLと模擬IME通知による検証と区別する。
+- DebugはTestOutput/Verified/MangaMaker.exe、fixtureはTestOutput/aa07f1f8261843e2a57ceb40004147d6。ReleaseはTestOutput/DialoguePolish/ReleaseVerified/MangaMaker.exe、fixtureはTestOutput/f476b4f1a6b244b08fe27a69cafb6155。ビルドログは同フォルダーのdebug-verified.log、release-checked.log、production-verified.log。placement-preview-5.png、placement-preview-7.png、dialogue-center-guides.png、inline-manual-overflow-caret.pngで配置予告・一時ガイド・枠外文字とキャレットを目視確認。証跡とソースハッシュはTestOutput/DialoguePolish/verification.json。
+- ユーザーの「保存して終了しました」を受領し、実行中の通常アプリがないことと開始前EXEの一致を確認して、直下MangaMaker.exeを通常Releaseへ更新した。SHA-256：3EDF31B3729D5CC9A5FBBA84D3FACF89D97727B6E617EC14EB3ED47832C2743C。開始前版2368B25E533FEE3798388C8136AA43EA6DE32CDD041A0B42DDF674127D6AF539はBeforeへ保持。resは開始前退避とバイト一致へ復元。72ユニットの構成制約・日本語PascalのUTF-8 BOM・git diff --checkを確認。アプリの強制終了・自動起動、commit/pushなし。
+
+## 吹き出し・セリフ選択と設定の即時反映（2026-10-18）
+
+- 本体選択Sとセリフ選択T/Vを分けた。入力中に文字の外側の本体・枠をクリックすると入力を確定し、本体選択へ渡す。その状態からTでセリフの8点を選択し、クリックまたはEnterで直接入力を開始する。Tの縦書き基本・再押下で縦横切替は保持。入力中の文字キーは入力側へ渡す。
+- セリフの移動は本体中央からの相対座標。四隅は文字サイズの比率維持拡縮。上下・左右の中央点は、縦書きなら文字間隔・行間隔、横書きなら行間隔・文字間隔を変更する。計算はSource/Editing/ComicDialogueTransform.pasへ分離。文字間隔・行間隔を0.25〜8の比率で保存し、旧作品では各1として読む。共通組版で折返し・字形寸法を保って始点とキャレットを調整し、入力・表示・PNG出力で共有する。縦中横の内部キャレットは字形内に保持する。
+- 本体8点と移動領域のホバーでカーソルを変更。通常の本体拡縮では文字サイズを保持し、Ctrl併用時だけ従来の文字込み拡縮を行う。しっぽと相対文字位置はどちらも追従。IME未確定中にアプリ独自で描いていた下線を除去し、明示的なフォント下線は保持した。
+- 「文字・設定を反映」ボタンを撤去し、文字・フォント・装飾・縦横・色・輪郭等を変更すると即時保存・再描画する。選択時のコントロール読込と入力プレビュー同期は変更イベントを抑制。メモ欄の連続入力は同じフォーカスの間を1回のUndoへまとめる。保存に失敗した設定は作品・Revision・Undo・コントロールを復元する。台本セリフの選択も即時反映へ変更し、専用入力画面内の取消可能なプレビューは維持した。
+- 最後に選んだフォントをFontHistory.jsonの先頭から復元し、新規吹き出しと空の吹き出しへの入力に使用する。空の既存吹き出しは入力プレビューだけへ優先フォントを設定し、確定時に文字と一緒に保存する。既存セリフの編集では元のフォントを保持。履歴は既存の上限10件・重複除去・保存失敗復元を使い、次のドロップダウンで先頭へ並べる。フォント選択直後に開いている項目の順序を変えない。
+- 読み取り参照元は直下の前回記録と同じ。今回の追加変更で同階層プロジェクトを変更していない。開始前の差分と通常EXE/resはTestOutput/BalloonRefinement/Beforeへ保持し、既存の未コミット変更を維持する。実作品・通常設定を自己検証に使用しない。
+- 最終Win64 Debug/Releaseは各3085件の自己検証PASS（末尾の完了報告行は件数から除外）、CLIガード3件はすべてexit2。通常Releaseもエラー・警告・ヒントなし、検証/計測用DCUは0件。8方向ホバー、通常/Ctrl本体拡縮、四隅の折返し維持、小数座標、辺の間隔・字形寸法・対辺固定、縦中横キャレット、入力→本体→セリフ選択、即時設定、メモ入力の履歴集約、保存ロック失敗の復元、旧形式読込、フォントの再起動復元・新規作成・空の既存吹き出し入力・既存フォント維持を確認。96/144 PPIは隔離VCL描画で検証し、物理IME候補操作・実モニター切替は未検証。
+- 指定DebugはTestOutput/Verified/MangaMaker.exe、fixtureはTestOutput/d79ec1ddadc048d6a9d1883e14bd71d1。ReleaseはTestOutput/BalloonRefinement/ReleaseVerified/MangaMaker.exe、fixtureはTestOutput/e2f344ee9a1a4ec8b45c154e7e28ee09。ログはTestOutput/BalloonRefinement/debug-final-verified.log、release-verified.log、production.log。dialogue-selection-144.png、dialogue-settings-live.pngと既存の入力描画画像を確認した。証跡とソースハッシュは同フォルダーのverification.json。
+- 通常アプリが終了していることと開始前バックアップの一致を確認し、直下MangaMaker.exeを検証済み通常Releaseへ更新した。SHA-256：96F3BC8F490FB7A16D444F63D98FED234B94103FCE23D71CE7E1E86C6E9121BC。開始前版9D5EBF4AD1DDBB953330A781B5203AF0D0118BF59EE9AC9BCC70FC59166680A4はBeforeへ保持。アプリの強制終了・自動起動は行っていない。ビルドが生成したresはBeforeのバイト列へ戻し、70ユニットの構成制約・日本語PascalのUTF-8 BOM・git diff --checkを確認した。commit/pushなし。
+
+## 吹き出しのキー切替とページ上の文字編集（2026-10-18）
+
+- 最新依頼に従い、吹き出し画面へS（選択）、T（文字）を追加。Tは別ツールから選ぶと縦書き、入力開始前に再度押すと横書きへ切替。U/Shift+Uは四角・楕円・角丸の順/逆切替、Pは三角/思考しっぽ、Aはしっぽ編集、Vは文字配置、Delは吹き出し/編集中のしっぽ削除。U/TはCLIP STUDIO PAINT公式のTool Shortcutsを参照し、その他は既存機能へ割当。キーと操作はアイコンのヒント・説明・READMEへ記載した。
+- 新しい吹き出しは空文字・縦書きで作成する。Tで文字ツールを選んで吹き出しをクリックすると、ページ上で直接入力・編集できる。選択ツールでのダブルクリックも直接編集へ変更し、既存の縦横を保持する。右側TMemo、台本セリフ補完、従来の専用入力画面は保持。文字編集中のS/T等は文字へ渡し、ツール切替や作品Undoで奪わない。
+- Source/Text/ComicInlineText.pasは既存TComicTextInputのUTF-16編集バッファ・IME受取・入力内Undoを再利用する。作品から複製したプレビューだけを編集し、RendererのBuildBalloonTextLayoutで完成ページと同じフォント・折返し・中央配置・倍率を使う。ネイティブ受取窓は描画せず画面キャレットへ追従させ、選択範囲とIME未確定文字をキャンバスへ重ねる。縦書きキャレットは横線、横書きは縦線。ページ/所属コマのクリップを維持し、PNG出力へ編集表示を入れない。
+- Enterは改行、Ctrl+Enterは確定、Escは取消。ドラッグ・Shift+矢印の選択、コピー/切取り/貼付け・削除・入力内Undo/Redo・単語移動を使用できる。中央配置の負座標でもHome/Endと行/列間の希望位置を正しく扱うため、共有組版へ行端取得、入力側へ希望位置の有効フラグを追加した。
+- 別操作・フォーカス離脱・ページ/画面/作品切替の前に入力を確定し、管理画面や保存/Undoと競合させない。IME未確定のEnter/EscはIMEへ渡し、操作移行では変換完了を要求してから終了する。Draft書込成功後に1回の作品Undoへ追加し、書込失敗では元データと履歴を復元して入力バッファを保持する。編集中の外部書込要求を拒否し、状態照会は許可する。
+- 読み取り参照元：指定された D:/DelphiProg/SYNC_ScreenLayout/SYNC_ScreenLayout_Filter.dpr、同プロジェクトnote.md、Source/Editor/Interaction/Text/ScreenLayoutTextEditing.pas、Source/Editor/ScreenLayoutCanvas.pas（TextEditorKeyDown、UpdateTextEditorBounds）、Source/Rendering/ScreenLayoutTextEditOverlay.pas。参照先にAGENTS.mdはなく、Git状態は開始/終了とも変更なし。他プロジェクトを検索パスへ追加していない。
+- 以前ビルド制限で未検証だった既存差分も今回の全体回帰へ含めた。そこで検出したComicImageLayoutTestsのSystem.Classes不足、非表示画像管理へのSetFocus（Showing時だけ行う）、右端吸着テストと上下端の近い候補の競合（試験配置で切り分け）、画像一覧ヘッダー98pxに対する古い56pxの期待値を修正した。ダブルクリックの旧TMemoフォーカス検証は新しい直接編集の検証へ更新。既存の開発差分を取り消していない。
+- 最終Win64 Debug/Releaseは各2531項目PASS、通常Releaseもエラー/警告/ヒントなし。入力・IMEイベント・文字選択・縦横キャレット・96/144 PPIと表示倍率1/2・保存再読込・取消・Undo/Redo・保存ロック失敗/再試行・外部書込拒否・画面切替を検証。物理的なIME候補選択/実変換・実モニターDPI切替は未検証で、模擬IME通知と隔離VCL描画を実機操作の代替とは扱わない。
+- 指定Debugの出力はTestOutput/Verified、ReleaseはTestOutput/Verified-Release。最終fixtureはDebug TestOutput/789c6a75f06b45e5bf84a45132bf4cd2、Release TestOutput/4ea5c5df9f8f47c6bd72b0f42077f44f。TestOutput/InlineText/へビルドログ、CLI結果、source-hashes.csv、verification.json、旧EXE/res/開始時差分を保持。Debug/ReleaseのCLIガード各2件と通常版の自己検証拒否はすべてexit2。通常版のテスト/計測DCUは各0件。構成検査69ユニット、git diff --check、日本語PascalのUTF-8 BOMを確認した。
+- 起動中のMangaMakerがないことと開始時EXEの保持を確認して、通常起動用MangaMaker.exeを通常Releaseへ更新した。SHA256は193F0FB87DE57D7EE1C45A4DFFAEDF65AD857DF1073C52F86412884C643FDD55。MangaMaker.resは開始時退避からバイト一致で復元。ユーザー作品・共有ライブラリや他プロジェクトを更新せず、ユーザーアプリの起動/強制終了・画像生成・外部送信・音・commit/pushは行っていない。
+
+## 追加の和室背景と目覚めの2コマを制作（2026-10-17）
+
+- ユーザー依頼「2コマ増やした、背景とともに作成して送信して」に従い、起動中のbridge-27380.jsonから同じ作品の新規3項目を取得。台本ID外の手動追加項目で、B011（ED5DF879-E90E-47AC-950B-1AE8D1472A48）、目が覚める（B92C2380-ED4B-4566-903A-4892B2E6E541）、ほっとする（C4536DB2-AD1F-4F20-BE3B-7C3564C49509）を対象とした。名前やUIDを変えず、追加登録もしなかった。
+- 内蔵image_genで1枚ずつ生成・目視確認し、背景→目が覚める→ほっとするの順で既存register_imageへ送信。人物は登録済みの東北きりたん／裸足（5D8E9588-5A60-4C46-A372-B6CF47EDF862）の三面図を毎回優先。下半身は布団内、上半身の衣装・顔・大きい頭と短い胴腕を維持した。
+- B011は朝の和室、左手前の生成り敷布団/淡い青緑の掛け布団、右奥の低い木机、机上の濃灰大型タブレット一台とスマホ/グリップ/ファーマイク一組、机下の黒バッグを固定。「目が覚める」は布団に入ったまま上半身を起こす驚き、「ほっとする」は同じ位置で機材を見る安堵の横顔。文字・吹き出し・擬音なし。
+- 開始時「ほっとする」の編集欄draftNotesにある「機材の方を見てほっとする」も読取り、後続のgeneration_contextで同じnotesを再取得して生成指示に反映。親背景登録後に子のcontextを取り直し、未取得fileとexpectedContextを照合して送信した。アプリ側連続生成・GUI操作なし。
+- 新3点すべて管理PNGと生成PNGのSHA256一致。既存59点のfile参照を保持し、全62点が取得済み。証跡・内蔵image_genの指示・PNGはTestOutput/AddedPanels/、verification.jsonと生成記録.txtにまとめた。通常キャラライブラリ・製品コード/EXEは今回無変更。既存の開発差分とビルド制限には触れず、ビルドは実施していない。
+
+## 画像管理メニューの名称・順序・Del（2026-10-17・実行検証待ち）
+
+- 最新指示により先頭を「新規場面」「場面移動」「コマを作成」の順へ変更。「場面移動」は既存alternate_scene（同じ場面の別位置背景を追加）、「コマを作成」は既存child（コマ用の派生画像登録）の名称変更。新しい移動やページのコマ枠作成機能は追加しない。子の初期名は「コマ画像」に揃えた。
+- 削除項目の表示を「削除」に短縮してDelを割当。確認・使用中参照の拒否・画像実体の保持・閉じる際のDraft保存は前回どおり。選択/生成状態の変更時にもEnabledを更新し、メニューを開く前のDelでも現条件を使う。空欄/未選択では削除と場面移動/コマ作成を無効にし、新規場面へ到達可能な状態を保つ。
+- フォーム全体のキー処理を追加せず、FTreeだけに割り当てたポップアップのShortCutを使用する。名前・説明欄とフォームにはこのPopupMenuを割り当てない。読み取り参照：C:/Program Files (x86)/Embarcadero/Studio/37.0/source/vcl/Vcl.Controls.pas のTWinControl.IsMenuKey（対象コントロール→親階層だけのPopupMenu照会）、Vcl.Menus.pasのTPopupMenu.Create/TMenu.IsShortCut、Vcl.Forms.pasのTCustomForm.IsShortCut。VCLソースは無変更。
+- 管理回帰に先頭3項目の順序、Del割当と入力欄/フォームへの非割当、メニュー未表示時の選択反映と実メニュークリックからの削除確認を追加。Delの実入力・文字削除・メニュー実表示は未実行。既知BRCC32レジストリ制限の条件が変わっていないためビルド再試行・昇格・別経路での回避はしない。構成検査67ユニット、git diff --check、対象PascalのUTF-8 BOMは確認済み。
+- 既存の修正と未コミット差分を保持。起動中の作品・通常EXE・ユーザーデータは変更せず、音・commit/pushなし。
+
+## 画像管理の右クリック操作・登録削除・閉じる保存（2026-10-17・実行検証待ち）
+
+- ユーザーが前回変更を「うまくいった」と確認。今回の対象は画像管理。新規場面・派生画像・画像登録・人物/服装参照・台本読込を右クリックへ移し、既存の別位置背景・タイトル追加と登録削除を同じメニューへまとめた。空欄/未選択でも新規場面と台本読込を使える。Codex生成・中止・台本連続生成・生成プリセット（Codexの生成条件）はボタンに残す。キャラクター管理の既存操作ボタンは対象外として保持。
+- 削除は場面名・派生を含む件数・割当コマ数・他画像からの参照数・台本対応数を表示し、明示確認の後だけ行う。否定ではStoreも行わず無変更。親場面は同じ親子ツリーの派生画像とまとめて登録を外す。割当コマ、外側のParentID/SourceID/SceneID参照、台本のuid対応が残る場合は理由を表示して停止する。台本対応が壊れている場合も停止。画像ファイルを物理削除しない。
+- 削除したオブジェクトは背面の画像一覧更新まで画面内で所有して寿命を保つ。閉じた際に一覧を更新してから解放する。Undoの開始時Snapshotと旧画像を維持し、管理操作全体を1回のUndoへまとめる。使用中の参照を自動解除する機能や台本対応の解除UIは追加していない。
+- 画像管理の「保存して閉じる」を廃止し、OnCloseQueryで入力をStoreした後、既存のAtomicWriteでDraft.jsonへ単独保存する。正式Project.jsonは従来のCtrl+S。保存失敗ではModalResultを解除して閉じるのを止め、入力と管理途中の変更を保つ。成功フラグと再入ガードで複数Close経路の二重保存を抑止し、外側FinishImageManagementは保存済みとして履歴/表示だけ更新する。生成結果や台本取込の従来の途中Draft保存は保持する。
+- 回帰をSource/Tests/Management/ComicAssetDialogTests.pasへ追加。空欄メニューと実追加、最後の場面削除、確認キャンセル、親子削除/ファイル保持、コマ・外部場面・台本の参照保護、生成中の無効化、保存ロック失敗、再試行、再入/二重Close、Draft再読込、正式保存の区別を無音の確認応答で検証するコード。既存の管理回帰は保存済み経路へ合わせた。ただし今回コンパイル/実行していないためPASSではない。
+- 前回BRCC32のレジストリ参照拒否（TestOutput/PanelImageLayout/debug.log、MSB4061/MSB4060）の実行条件は変わっていない。ビルドを再試行/昇格/別経路で回避せず、Delphi Debug/Release・実ダイアログ表示/操作・Undoを未検証として残す。構成検査は67ユニット、git diff --checkと対象PascalのUTF-8 BOMは確認。前回画像スナップ/標準コマ割り/台本関連の既存差分を保持し、起動中のユーザー作品、共有ライブラリ、通常EXE、resには変更を加えない。音、commit/push、不要な大容量データ作成/削除なし。
+
+## 組込みコマ割りを5種から17種へ追加（2026-10-17）
+
+- ユーザー依頼により既存標準5種を保持し、12種を追加。2コマ：上下・上大、上下・下大、左右・右大、左右・左大。3コマ：上2コマ＋下大、横長3段、右縦長＋左2コマ、右2コマ＋左縦長。4コマ：横長4段、横長＋2コマ＋横長。5コマ：2コマ＋横長＋2コマ。6コマ：標準3段。名称・自動サムネイル・一覧は従来の方式を使い、分類UIは追加しない。
+- ComicLayouts.pasのSeedAdditionalLayoutsに矩形定義を分離。従来builtin-1〜5のID・順序・名前・形を保ち、新規builtin-6〜17を末尾へ追加する。コマ番号は追加順で、段内は右から左・段は上から下。段をまたぐ縦長は右列から左列へ読む。1200×1700、余白60、コマ間24の既存基準に従う。
+- 起動時のSeedLayouts→LoadLayoutsと、BuiltIn以外だけをSaveLayoutsで保存する方式を維持。既存ユーザーは更新ビルドでアプリを再起動すれば標準17種＋保存済み自作分が一覧に出る。Presets/Layouts.jsonの削除・書換え・初期化は不要。標準は従来から名前変更/削除不可、自作分のID・編集済み内容・削除状態を標準追加で上書き/復活させない。現在起動中のアプリや通常EXEには未反映。
+- Tools/CheckBuiltInLayouts.ps1で定数矩形を読み、17種のID/名前/配置の一意性、旧5種維持、範囲・最小寸法・重なりなし・24px間隔・右→左/上→下の読順・連番・組込の保存除外を静的に確認しPASS。証跡はTestOutput/BuiltInLayouts/structure.json。layout-structure.svgは番号付き構造見本で、実VCL描画のキャプチャではない。
+- 既存自己検証の固定5/6件をBuiltInLayoutCount基準へ更新し、削除済み自作分が新標準と再読込しても復活しない回帰を追加。これらDelphi回帰は未コンパイル・未実行。前回のBRCC32レジストリアクセス拒否の実行条件は変わっていないため、ビルドを再試行/昇格/別経路で回避しない。実サムネイル・適用/保存/Undoも今回未検証で、ビルド可能後に指定Debug/Releaseで確認する。
+- 構成検査66ユニット、git diff --check、対象PascalのUTF-8 BOMを確認。前回の画像リサイズ/スナップと台本関連の未コミット差分を保持。ユーザーのライブラリ・作品・起動中アプリ・通常EXEには触れず、音、commit/push、不要な大容量データ作成/削除なし。
+
+## コマ枠リサイズと画像配置スナップ（2026-10-17・実行検証待ち）
+
+- 最新指示により、コマ編集の枠リサイズで割り当て画像のページ上の位置・見た目の倍率を保つ。従来のCover倍率と手動Zoomの積を、押下時の画像範囲から補正する。単体・複数選択に適用し、枠の移動では従来どおり画像が追従する。画像UID・保存形式は変更しない。既存の枠スナップ（四辺・四隅、外枠・他コマ・間隔、最小寸法、Alt/設定OFF）を維持する。
+- 追加指示により画像配置の移動・比率維持リサイズへ、所属コマの同じ側の端と中央へのスナップを追加。中央は画像中央とコマ中央。既存の8px相当許容距離を表示倍率/PPIで換算して共用し、コマ編集の設定とAlt解除に従う。リサイズの反対辺/固定点・比率・最小倍率を保つ。
+- 吸着した軸だけ紫色点線を編集キャンバスに描く。ガイドはフォームの一時状態で、離す・取消・画面/選択変更で消す。Renderer・作品JSON・PNG出力へ追加しない。
+- 新規計算はSource/Editing/ComicImageSnap.pas、回帰はSource/Tests/Editor/ComicImageLayoutTests.pas。四辺/四隅、拡大/縮小、4形状、表示ズーム1/2、最小寸法、画像の位置/倍率、複数選択、Undo/Redo、保存再読込、端/中央、比率/固定点、Alt/設定OFF、ガイド消去を検証するコードを追加した。ただし未コンパイル・未実行であり、PASSとは扱わない。
+- 指定の ./build.ps1 -SelfTest -OutputDirectory 'TestOutput/Verified' を通常権限で実行したが、BRCC32タスクの初期化時にSystem.Security.SecurityException「要求されたレジストリ アクセスは許可されていません」で停止（MSB4061/MSB4060）。コンパイラ・自己検証へ到達せず、Release/通常版/実画面も未検証。ユーザー指示どおり昇格・別経路で回避せず停止。次回はビルド環境のアクセス制限が解決した後、指定DebugとReleaseを実行する。
+- 静的な構成検査は66ユニットで成功。今回のログはTestOutput/PanelImageLayout/debug.log。開始時resを同Before/MangaMaker.resへ保持し、失敗後のSHA256一致を確認。既存の台本関連未コミット差分を保持し、ルートEXE・起動中の作品・他プロジェクトは更新しない。失敗ビルドが直下に生成したmanifest/vrcの2小ファイルはTestOutput/PanelImageLayout/FailedBuildへ移して保持。git diff --check成功。commit/push、音、不要な大容量データの作成/削除なし。
+
+## I001へタイトルロゴときりたんの表示を追加（2026-10-17）
+
+- ユーザー依頼「001にタイトルロゴを重ねたい、東北きりたんも表示」によりI001を扉絵へ更新。内蔵image_genで元I001と登録三面図を参照し、世界樹の商店街と横長2:1の画角を保ち、左にきりたん全身、右に「2万円のおにぎりと始まらない配信」の3行ロゴ、その下に「東北きりたん」を配置した。タイトルと名前の文字を目視確認。
+- 今回のタイトル文字は明示依頼によるI001だけの例外。後続の本編コマには引き続き文字や吹き出しを焼き込まない。人物の外見は正式三面図を最優先とし、タイトル入りI001を次の画像の文字・構図基準として使わない。文字なし初登場画像はTestOutput/TitleI001/I001-before.pngと元の管理PNGに保持。
+- assetID B46D556F-C1CB-4A96-80CE-B9DA7DD204BEを維持し、旧fileとexpectedContextを照合してregister_imageで更新。再照会した管理PNGと完成PNGのSHA256一致を確認。通常キャラライブラリ・台本・製品コード/EXEは無変更。アプリを開くGUI操作なし。
+- 完成PNG・元画像・内蔵image_genの生成指示・開始時条件・登録結果・検証はTestOutput/TitleI001/{I001-title.png,I001-before.png,I001-title-prompt.txt,I001-context.json,I001-receipt.json,asset-after.json,verification.json}。
+
+## I014から最終I049までCodexで順次制作（2026-10-17）
+
+- 最新依頼「続けて順番に進めて、キャラの維持に注意」に従い、このチャットの内蔵image_genで背景B007〜B010とコマI014〜I049の計40点を1点ずつ生成・目視確認し、既存register_imageで送信した。アプリ側の連続生成は使用せず、sequenceActive=falseを維持。アプリを開くGUI操作はユーザーへ任せた。
+- 開始時にアプリのread_scriptを再照会すると、現在の台本は12ページ・I049/D041まで完成していた。以前の「I046未完保留」は過去の状態であり、今回はI046以降も制作済み。現在の台本はTestOutput/CodexContinue/source.txtに取得。外部の元txtは変更していない。
+- 主人公は毎回登録三面図を最優先にして、約2.8〜3頭身・大きな頭・短い胴と手脚・暗赤ボブ・両髪飾り・和服・帯・紺スカート・背中リボン・足袋と草履を確認。前画像は背景・動作・装備の補助資料として使用した。元上司/元部下は修正済みI007と初登場資料を参照。
+- 店員はI014で短い茶髪・白三角巾・生成りシャツ・濃紺エプロンの中年女性として初登場し、後続でも参照。有名人はI027でアッシュグレーの短いウェーブ髪・茶目・丸眼鏡・青緑ジャケット・アイボリーニットの穏やかな男性として初登場し、I048/I049まで維持。配信者モブ二人はI044の黒短髪/四角眼鏡/からし色パーカーの男性、茶髪ポニーテール/紫シャツ/黒ヘッドホンの女性を後続参照にした。
+- 後半の大型端末はI030/I031で薄い濃灰の横長タブレット・細い黒ベゼル・折り畳みスタンド・キーボードなしに固定。従来のスマホ/グリップ/ファーマイクは机に置いた一組だけ。I022の伝票に入った文字とI044/I045のバッグ付近に重複したマイク等は内蔵image_genで局所修正し、確認後に採用した。I044は取得済み画像を条件照合して更新、旧PNGも保持。
+- 店の窓/客席/カウンター/藍色無地のれん/同方向の傾き/昼の光、食べかけのおにぎりと食器の経過を参照。主人公は実際には店を手伝わず、予備機材は見つからず、他人に借りず、有名人は催促せず、配信未開始の結末を維持。文字・セリフ・吹き出しは画像へ焼き込んでいない。
+- 最終read_scriptで背景10＋コマ49の全59点completed、ready/waiting/deferredはすべて0。全管理画像が実在し、今回40点は生成PNGとアプリ管理PNGのSHA256一致を確認。末尾の「終了」や制作条件の箇条書きには既存パーサーの形式診断11件が残るが、画像項目の保留は0。原文を自動書換えしていない。
+- 証跡・画像・各プロンプトはTestOutput/CodexContinue/。verification.json/csv、script-start.json/script-after.json、assets-after.json、各ID-context.json/-receipt.json/-prompt.txt、生成記録.txtを保持。Exchange.ps1は照会と送信のみで、Replace指定時も旧file/expectedContextを照合。生成・一貫性判断はこの会話が担当する。
+- 通常キャラライブラリ・台本・製品ソース・EXEは今回変更なし。既存未コミット差分は保持。登録先は従来どおり作業データ/Draft。git diff --check成功。画像制作のみのためビルド/自己検証は実行していない。次はユーザーの確認後、既存のコマ配置・セリフ補完でページ制作を試す段階。吹き出し生成の実験は未着手。
+
+## I010から3ページ目をCodexで制作（2026-10-17）
+
+- ユーザーがI007〜I009の等身修正を承認し「I010から作業をしてみて」と依頼。まず自然な区切りとなる3ページ目のI010〜I013を、このチャットの内蔵image_genで1枚ずつ生成・目視確認し、既存register_imageで順にアプリへ送信した。
+- 保留していたB006は、開始時と現在のgeneration_context/fingerprintが一致することを確認して先に登録。I010はB004の傾いた店舗外観へ3人が向かう引き、I011はB006店内で主人公だけが違和感を覚えて止まる3人構図、I012はB005で床・壁の傾きに気づく困惑、I013はB006で軽く平衡を崩し気分が悪くなる上半身中心の中景。
+- すべて正式三面図を主人公の外見・約2.8〜3頭身の最優先参照にした。修正済みI007/I009は男性2人の服・鞄と持ち物の補助資料として使い、長い胴や脚へ戻らないことを確認。店内は左窓/客席・右カウンター/ケース・藍色のれん・同方向の傾き・昼の光を維持。文字・セリフ・吹き出し・コマ枠は焼き込んでいない。I012のコマ枠の斜め演出は後のページ編集で扱う。
+- 各画像はexpectedContextとexpectedFileName空文字を照合して登録。UIDを保持。登録後にlist_assetsとread_scriptで再照会し、管理画像と生成PNGのSHA256一致を5件（B006/I010〜I013）で確認。現在19件取得済み、アプリ側のsequenceActive=false。アプリの自動生成やGUI操作は行っていない。通常キャラライブラリ、台本、アプリソース/EXEは変更していない。
+- 証跡とプロンプトはTestOutput/CodexI010/{verification.json,assets-after.json,script-start.json,script-after.json,I010〜I013-context.json,-readable.txt,-prompt.txt,-receipt.json,I010.png〜I013.png,生成記録.txt}。B006の生成PNGとプロンプトは前回のTestOutput/CodexDirected。登録は従来どおり作業データ/Draftへ保存される。
+- 次の場面は4ページ目。B007をB005から用意してI014の注文・会計へ進む。I046は未完保留のまま。ユーザーが画面を開く方針を維持する。
+
+## I007以降の等身を登録三面図へ戻す（2026-10-17）
+
+- ユーザー指摘：I007から等身が崩れているため、キャラ情報を再参照して正しく更新したい。取得済みコマはI009までなので、I007/I008/I009を修正対象とした。
+- 登録された東北きりたん基本服装の正式三面図と、I006〜I009の実画像を目視比較。I007以降で頭に対して胴・腕・脚が伸びていることを確認。正式三面図の約2.8〜3頭身、大きな頭、短い胴と手脚を最優先にして、このチャットの内蔵image_genで各画像を編集した。元上司・元部下、背景、構図、台本の出来事を保ち、等身に必要な調整を行った。
+- 修正I007を確認・送信した後、最新contextを取り直してI008、I009も順に修正・送信した。register_imageは旧fileとexpectedContextを照合。素材UIDと参照関係は維持し、旧画像もアプリ管理領域とTestOutput/CharacterProportionに保持。通常キャラライブラリ、正式三面図、台本原文、アプリソースやEXEは変更していない。
+- 現在のユーザーアプリのmanifestはbridge-18916.json。ユーザーが開いた作品の画像管理へ3件の更新を反映済み。起動・作品を開く画面操作はしていない。登録は従来どおり作業データ/Draftに保存される。
+- 検証：3件とも同じassetID、旧画像実在、新管理画像と修正PNGのSHA256一致を再照会で確認。証跡はTestOutput/CharacterProportion/{assets-before.json,assets-after.json,verification.json,I007〜I009-context.json,-before.png,-fixed.png,-prompt.txt,-receipt.json}。
+- 以後は前コマをそのままキャラ体型の基準にせず、毎回正式三面図の頭・胴・脚の比率を優先して確認する。前コマは持ち物・動作・背景の連続性資料。B006は前ターンで生成済み・送信待ちのまま。
+
+## Codex側で一貫性を確認して生成・送信する方針（2026-10-17・最新）
+
+- ユーザー訂正：アプリに連続生成を一任する意味ではない。このチャットのCodexが台本・登録キャラ・背景・前コマを読み、生成画像を確認してからアプリへ送り、次へ進む。一貫性の判断はこの会話で保持する。
+- アプリ側の連続生成をcancel_generationで停止し、sequenceActive=falseを確認。直前の連続処理で9件が完了し、元からの5件と合わせて14件取得済み。取得画像は保持した。今後start_script_generationを使わない。台本・進捗・生成条件の照会とregister_imageは既存連携を使えるので、今回の方針変更に追加UIやEXE差し替えは必要ない。
+- このチャットの内蔵image_genでB006を生成し、B005との室内配置・画風・傾きの連続性を確認。PNGはTestOutput/CodexDirected/B006.png、プロンプトはB006-prompt.txt、開始時条件はB006-context.json。まだアプリへ登録していない。生成原本は保持。
+- 最新ユーザー指示「開く作業はこっちでします」。アプリや作品を開く画面操作はユーザーへ任せ、こちらから追加のGUI操作をしない。対象作品がユーザー側で開かれた後、正しいmanifest・作品IDを再照会し、B006の開始時fingerprintと現条件を比較してから送信する。アプリのPIDは再起動で変わるので、Exchange.ps1の固定manifestをそのまま使わない。
+- 外見・持ち物・店の配置の基準はTestOutput/CodexDirected/継続基準.txtに記録。補助Exchange.ps1は資料取得と送信のみで、画像生成・判断はしない。吹き出しまでの自動化は実験後に決める。以下のアプリ側連続生成の章は過去の試作経緯。
+
+## 既存画像管理から台本順の連続生成（2026-10-17）
+
+- 最新ユーザー依頼：画像整理からCodexで各種データを読み、画像生成→アプリへ送信→次のシーンを連続処理したい。吹き出しまで自動化するかは実験後に判断。専用台本画面を復活させず、既存画像管理に「台本の未取得画像を連続生成」を追加した。
+- Model/Script/ComicScriptGeneration.pas が台本順の処理可能・取得済・背景/人物待ち・未完保留を計算。Workspaceの既存Codex生成・登録タイマーが各画像の採用後に次を選び直す。完成ファイルを飛ばして再開し、中止・管理画面終了・生成失敗・対象や条件変更で停止する。選択した背景・登録キャラに加え、説明のみの固有人物は初登場の取得画像を外見参照として渡す（集約した群衆定義は固定しない）。
+- ローカル連携に read_script（原文＋進捗）、generation_context（既存生成と同じ情報・参照ファイル）、start_script_generation（limit指定可能）、cancel_generation を追加。Codexで直接生成した画像の register_image は任意 expectedContext で開始時の生成条件も照合できる。吹き出しの自動作成・焼込は追加せず、既存のセリフ入力候補を維持。
+- Debug／Release各1835項目PASS、通常Releaseはエラー・警告・ヒントなし、通常版--self-testはexit2、64ユニットの構成検査とgit diff --check成功。別の隔離VCLホスト＋模擬Codexプロセスで実ワーカー通信/登録を通し、2枚上限、背景→人物、初登場参照、続きから再開、完了後の空実行、失敗、中止、生成中条件変更、前画像保持など19項目PASS。模擬応答は検証フォルダー内だけで使用し、実作品には登録していない。
+- 実作品ID ACBD50A6-DA29-4ECC-A2B5-99FE2C0DBDCA（2万円のおにぎりと始まらない配信／第1話）を起動中のパイプから照会。既存4枚 B001/B002/I001/I004 を保持。内蔵imagegenで I002 を背景B002・東北きりたん三面図・I001を参照して生成し、開始時データが変わっていないことを再照会して、expectedFileName空文字付きで登録した。生成原本は保持。新しいアプリ管理画像は Images/271D25A5-8792-4B2B-8448-DBB64FC8A7A4.png。
+- ユーザーの保存・メイン画面終了の返答を受け、プロセス終了を確認して通常EXEを差し替えた。SHA256 B074659650F8EAD42720BB908C395FAEA319EB49556EDBA383D689582FFD709B。直前EXEと開始時resをTestOutput/SceneSequence/Beforeへ保持。resは退避版とバイト一致で復元し、元からの差分を保持。commit/pushなし。
+- 修正版を起動し、既存の作品読込UIで上記Project.jsonを開き、前回Draftの復元を選択してCtrl+Sで保存した。画像管理を開き、bridge-27024.jsonに start_script_generation を送り、I003から残り50件の実生成を開始済み。実連続処理でI003の生成・採用が完了し、B003へ自動移行したことをread_scriptで確認した。未完I046は別途1件保留。管理画面を閉じると停止する。ユーザーアプリやCodex本体を強制終了していない。
+- 証跡：TestOutput/SceneSequence/{debug-current.log,release-tests.log,production.log,probe.log,live-plan.json,live-running.json,I002-context.json,I002-receipt.json,I002.png,verification.json}。元txtは無修正、SHA256は7C65524436EAE3E30E7874EC09A696BCF6444E2156498FCC6E8E8A9D2FD96C68を維持。通常キャラライブラリは読取のみ。GUI操作はcomputer-useスキル、画像生成はimagegenスキルを使用。
+
+## 台本を既存画面へ補完する方針へ修正（2026-10-17）
+
+- 最新ユーザー意図は、専用の台本UIを追加することではなく、既存の画像取得・セリフ入力で台本の内容を補うこと。従来の専用台本画面と逐次生成キューは取り除いた。以下の専用画面・修正版テキストへ置き換える案内は過去の経緯として読む。
+- 画像管理に「台本を読み込む／補完」を追加し、背景・コマ画像を既存の親子ツリーへ取込む。名前・説明・参照キャラを補い、その後の取得は従来の画像生成／画像登録で行う。ファイルメニューも「台本を読み込む」へ変更し、既存画像管理へ接続した。
+- 吹き出し右側の文字欄と既存の専用文字入力に、台本のセリフ候補を追加。配置画像のIDで絞り、選択で入力を補う。反映／確定は既存の動作を使い、選択だけで作品を上書きしない。
+- 読込エラーを項目に所属させ、未完の項目だけを保留する。重複IDは両方の定義と依存先を保留し、無関係な項目は使える。台本全体の拒否は空・上限超過などだけとする。
+- 元の V:/夢日記マンガ/2万円のおにぎりと始まらない配信.txt を無修正で検証し、背景10＋画像45の55項目、セリフ39件を取込めた。I046だけを保留。「客」「他の配信者たち」は集約したモブ定義から解決し、主人公の提供三面図は唯一の登録人物である東北きりたんの基本状態へ補う。複数の登録人物では勝手に割り当てない。
+- 再読込で素材UID・取得画像・手動で修正した説明を保持する。保存失敗は素材と台本を復元し、取込は既存管理操作のUndoへまとめる。元のtxtを変更しない。通常のキャラライブラリも変更しない。
+- 単独生成画面のコードと旧テストはTestOutput/ScriptIntegrated/Beforeへ退避し、現行回帰は既存画像管理・生成Snapshot・文字入力・保存整合を検証する内容へ置換した。試作用作品は TestOutput/ScriptIntegrated/Data/Projects/F13F454B-D184-40AB-B37D-2BE1B2864C1E/Project.json。今回の取込確認で新しい画像生成や外部送信はしていない。
+
+- 台本IDを省略して読み直しても、作品に保持した前回の台本IDへ接続し、取得済み画像を重複作成しない。背景の指定を変更した場合は、自動補完したままの所属だけを更新する。手動変更した説明・名前・参照は保持する。
+
+- 最終Win64 Debug／Releaseとも1825項目PASS（既存1798＋既存画面への台本補完27）。旧専用画面のテストを撤去し、部分読込・再読込・手動編集保持・背景所属更新・台本ID省略・保存失敗復元・既存生成Snapshot・両文字入力の仮確定を検証。通常Releaseもエラー／警告／ヒントなし、CLI自己検証拒否はexit2。通常EXEを更新し、新SHA-256は0AF63FF4A50B58CA97BA0921CC920E9C93A67AA06337E441D6FDEC5EBFC16442。開始時のMangaMaker.res差分は退避版からバイト一致で保持した。git diff --checkと63ユニットの構成検査は成功。証跡はTestOutput/ScriptIntegrated/verification.json、debug-current.log、release-current.log。commit/pushなし。
+
+## 全文台本の読込エラー修正（2026-10-17）
+
+- ユーザーが元の全文を開いた際のエラーを再現。732行の閉じ括弧不足、客・他の配信者たちの人物定義不足が開始を妨げていた。その他の背景待機は正常な依存待ちであり、書式の違いではない。前回の実生成確認は完結した1ページ版で、全文の入力整備が不足していた。
+- 原本を保持し、TestOutput/ScriptTrial/2万円のおにぎりと始まらない配信_MangaMaker読込用.txt を作成。台本ID・東北きりたん／基本服装の主人公割当・脇役の明示定義を補う。未完の構図はコメントで原文を残し、I046を [生成：保留] とする。12ページ目・結末は創作していない。全文の専用読込検証はエラー・警告とも0件。
+- 生成：保留／確認事項 を追加し、その項目だけを止めて独立した処理を続ける。生成：対象 に戻せば再開できる。保留指定でも不正な書式・未知の参照は自動的に許容しない。
+- 台本画面の先頭に「開始を妨げる書式・参照エラー：件数」を表示し、補足と通常の順番待ちを区別。エラーがある間は開始ボタンを無効化し、修正後に有効化する。
+- 今回は追加画像生成・実作品や通常キャラライブラリへの変更をしていない。修正版の開き方は TestOutput/ScriptTrial/全文修正版の開き方.txt。ユーザーへアプリ終了を依頼し、保存・終了済みとの返答を受領した。稼働中のユーザーアプリは強制終了しない。
+
+- 最終Debug／Releaseとも1834項目PASS（保留・継続・開始ボタンを6項目追加）。全文修正版はエラー／警告0件。通常Releaseは警告・エラー・ヒントなし、通常版の自己検証拒否はexit2。ユーザーがメイン画面を終了した後にルートEXEを更新し、直前版をTestOutput/ScriptFix/Beforeへ保持。新SHA-256：9F01C87576F963C696BA5742617A8687F27F3B8A7477A1F31D96A28E47255922。証跡はTestOutput/ScriptFix/verification.json、debug.log、release.log。元台本SHA-256は7C65524436EAE3E30E7874EC09A696BCF6444E2156498FCC6E8E8A9D2FD96C68を維持。生成res差分は戻し、git diff --check成功。commit/pushなし。
+
+## 台本読込・逐次生成の入口（2026-10-17）
+
+- 最新ユーザー指示で製品実装へ着手。「コード変更不要」は以前の検討段階の方針。ファイルメニューに「台本から画像生成」を追加し、本文編集・登録人物割当・不足表示・開始／中止／再開を提供する。
+- 専用台本の旧記法と角括弧記法、ページ見出し、暗黙の背景・セリフ画像、人物→表情の繰返し、心の声表記、複数行本文を読む。エラーは行番号付きで表示する。人物定義と登録名・服装・参照画像を照合し、画像ごとの変更を持ち越さない。説明のみの脇役は初登場画像も後続画像の参照に使う。
+- 本編は依存順に1点ずつ既存の専用Codex通信で生成し、その後に使用する透明効果・オノマトペを生成する。使用しない素材は生成しない。セリフは生成指示から分離して一覧とコピーを提供する。
+- 本文と台本ID／項目ID→UID・生成条件・画像ハッシュの対応を作品JSON内へ保存する。Draftの単一書込みが成功してから生成結果を採用する。完了済みは再利用し、条件変更・画像不足は明示指定で再生成する。既存画像の再生成ではUIDと旧ファイルを保持する。取消・遅延結果・保存失敗を検証する。
+- モデル／読込／条件展開は Source/Model/Script、逐次処理はIntegration、画面はDialogs、自己検証はTests/Managementへ配置する。同階層プロジェクトは今回は参照・変更していない。
+- ユーザー指定の実台本は V:/夢日記マンガ/2万円のおにぎりと始まらない配信.txt。末尾は11ページ目I046の構図行で途切れている。原本を変更せず、完結している1ページ目をTestOutput/ScriptTrialへ切り出した。主人公は東北きりたん／基本服装へ割当。通常キャラライブラリは読み取りだけで、専用Dataに参照画像をコピーして使用した。
+- 実通信でB001とI001の2点を生成・自動登録し、文字・吹き出しなし、背景の継続と東北きりたんの配置を目視確認した。作品は TestOutput/ScriptTrial/Data/Projects/9EE89D37-98A6-4571-A415-4503AAFDB8E5/Project.json。試作継続は同フォルダー上位の 開始手順.txt／Start-ScriptTrial.ps1。残りの画像を自動で追加生成していない。
+- 入力ひな型を試作版2へ短縮。旧サンプルと旧記法は保持して読める。今回の操作・省略規則・素材・制限は Samples/ScriptWorkflow/台本読込の使い方.txt を現行の入口とする。旧「移動先での開始手順」「読込確認結果」は2026-10-16の履歴。
+- 今回は生成中の台本画面が編集を占有する。セリフD&D・自動ページ配置・編集中の裏生成・自動品質判定は未実装。ページ見出しは構成案として保持し、コマ割り・吹き出し配置は人間が担当する。実台本の続きを補完する作業も行っていない。
+
+
+- 最終Win64 Debug／Releaseとも1828項目PASS（従来1798＋台本30）。依存順、参照展開、画像別上書き、未使用素材、実ダイアログ読込と人物割当、重複・途切れ・未定義参照、保存再読込、完了再利用、UID維持の再生成、中止、Draftロック失敗と再送を検証。通常Releaseもエラー・警告・ヒントなし。構成は64ユニットで1500行／8ユニット制限を満たす。ログは TestOutput/ScriptBuild/。Debug fixtureは80038487b0594eac9219013da24e1c35、Releaseはeb360a25bed4433ab4fbf043b157adc1。VCLの項目一覧とボタンをオフスクリーン描画で確認したが、メモ欄の描画はそのキャプチャ方式では確認できていない。物理操作・実モニターDPIの確認は未実施。
+
+- 通常起動用MangaMaker.exeを検証済み通常Releaseへ更新。旧版はTestOutput/ScriptTrial/Beforeへ保持。新SHA-256は74C9F92D4FECA99C9903370269F4DFBA422F056C4D66DDE607AB0871D4AD8F37。通常版の自己検証拒否と検証版の引数ガード計3件は終了コード2。生成されたres差分は元へ戻し、ソース差分に生成物を含めない。git diff --check成功、commit/pushなし。
 
 ## 台本テンプレートの作成・読込検討（2026-10-16）
 
@@ -347,6 +612,12 @@
 - `../SYNC_ScreenLayout/Source/Editor/ScreenLayoutCanvas.pas`
 - `../SYNC_ScreenLayout/Source/Rendering/ScreenLayoutTextEditOverlay.pas`
 - `../SYNC_ScreenLayout/Lib/InputMethod/WindowsImeController.pas`
+
+ページ管理の差分更新時にAPI宣言を読み取り参照したDelphi 37.0標準ソース（変更なし）:
+
+- `C:/Program Files (x86)/Embarcadero/Studio/37.0/source/vcl/Vcl.StdCtrls.pas`
+- `C:/Program Files (x86)/Embarcadero/Studio/37.0/source/vcl/Vcl.Controls.pas`
+- `C:/Program Files (x86)/Embarcadero/Studio/37.0/source/rtl/common/System.Hash.pas`
 
 ## β版の保存形式
 

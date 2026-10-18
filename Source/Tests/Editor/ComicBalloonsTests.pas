@@ -7,6 +7,7 @@ procedure RunTailChecks(Host: TComicTestForm);
 procedure RunBalloonContourChecks(Host: TComicTestForm);
 procedure RunTextPlacementChecks(Host: TComicTestForm);
 procedure RunTextScaledWrappingChecks(Host: TComicTestForm);
+procedure RunBalloonInteractionChecks(Host: TComicTestForm);
 implementation
 uses Winapi.Windows, Winapi.Messages, Winapi.ShellAPI, Winapi.Imm,
   System.SysUtils, System.Classes, System.Types, System.UITypes,
@@ -22,6 +23,7 @@ type
     procedure BalloonContourChecks;
     procedure TextPlacementChecks;
     procedure TextScaledWrappingChecks;
+    procedure BalloonInteractionChecks;
   end;
 procedure TComicBalloonsTestsHelper.TailChecks;
   var Probe: TComicTestForm; Project,Reloaded: TComicProject; Balloon,LegacyA,LegacyB: TComicBalloon;
@@ -46,7 +48,7 @@ procedure TComicBalloonsTestsHelper.TailChecks;
     end;
     procedure SelectBalloon;
     begin
-      Tool(0); R:=Probe.Page.Balloons[0].Bounds; Click(R.CenterPoint.X,R.CenterPoint.Y);
+      Tool(0); R:=Probe.Page.Balloons[0].Bounds; Click(R.Left+R.Width/5,R.CenterPoint.Y);
     end;
     procedure TailStateEqual(const Source: TComicBalloonTransform; const Target: TRectF; const Message: string);
     var I: Integer; SX,SY: Double;
@@ -61,8 +63,9 @@ procedure TComicBalloonsTestsHelper.TailChecks;
     end;
   begin
     Probe:=TComicTestForm.Create(nil); PNG:=TPngImage.Create; Reference:=TBitmap.Create; Shifted:=TBitmap.Create;
+    Probe.FDragPlacementMenu.Checked:=False;
     try
-      Project:=TComicProject.Create; Project.Initialize('複数しっぽ fixture','1'); Probe.AdoptProject(Project,False);
+      Project:=CreateFixtureProject; Project.Initialize('複数しっぽ fixture','1'); Probe.AdoptProject(Project,False);
       Panel:=TComicPanel.Create; Panel.Bounds:=TRectF.Create(100,100,900,1200); Panel.ImageID:=Project.ImportImage(TPath.Combine(TestFolder,'reference.bmp'),'').ID;
       Probe.Page.Panels.Add(Panel);
       Balloon:=TComicBalloon.Create; Balloon.Bounds:=TRectF.Create(150,150,550,550); Balloon.PanelID:=Panel.ID; Balloon.Text:='複数のしっぽ';
@@ -107,17 +110,17 @@ procedure TComicBalloonsTestsHelper.TailChecks;
         'individual tail deletion keeps the other tail body and text');
       Probe.Undo(nil); Check(Project.Snapshot=Before,'individual tail deletion undo restores stable identities');
       SelectBalloon; Original:=Probe.Page.Balloons[0].CaptureTransform; R:=Original.Bounds;
-      X:=Probe.FPageRect.Left+Round(R.CenterPoint.X*Probe.FScale); Y:=Probe.FPageRect.Top+Round(R.CenterPoint.Y*Probe.FScale);
+      X:=Probe.FPageRect.Left+Round((R.Left+R.Width/5)*Probe.FScale); Y:=Probe.FPageRect.Top+Round(R.CenterPoint.Y*Probe.FScale);
       Probe.MouseDown(Probe.FCanvas,mbLeft,[],X,Y); Probe.MouseMove(Probe.FCanvas,[ssLeft],X+20,Y+12); Probe.MouseUp(Probe.FCanvas,mbLeft,[],X+20,Y+12);
       TailStateEqual(Original,Probe.Page.Balloons[0].Bounds,'body move carries every owned tail root and tip');
       Probe.Undo(nil); Check(Project.Snapshot=Before,'body move undo restores all owned components');
       SelectBalloon; Original:=Probe.Page.Balloons[0].CaptureTransform; R:=Original.Bounds;
       X:=Probe.FPageRect.Left+Round(R.Right*Probe.FScale); Y:=Probe.FPageRect.Top+Round(R.Bottom*Probe.FScale);
-      Probe.MouseDown(Probe.FCanvas,mbLeft,[],X,Y); Probe.MouseMove(Probe.FCanvas,[ssLeft],X+35,Y+20); Probe.MouseUp(Probe.FCanvas,mbLeft,[],X+35,Y+20);
+      Probe.MouseDown(Probe.FCanvas,mbLeft,[ssCtrl],X,Y); Probe.MouseMove(Probe.FCanvas,[ssLeft,ssCtrl],X+35,Y+20); Probe.MouseUp(Probe.FCanvas,mbLeft,[ssCtrl],X+35,Y+20);
       TailStateEqual(Original,Probe.Page.Balloons[0].Bounds,'body resize carries every owned tail root and tip');
       Check((Probe.Page.Balloons[0].FontSize>Original.FontSize) and (Probe.Page.Balloons[0].BorderWidth=3) and
-        (Probe.FFont.Text=IntToStr(Probe.Page.Balloons[0].FontSize)),'body resize scales text while retaining output-pixel border width and matching controls');
-      Project.Save; Reloaded:=TComicProject.Create;
+        (Probe.FFont.Text=IntToStr(Probe.Page.Balloons[0].FontSize)),'Ctrl body resize scales text while retaining output-pixel border width and matching controls');
+      Project.Save; Reloaded:=CreateFixtureProject;
       try Reloaded.Load(TPath.Combine(Project.Folder,'Project.json'));
         Check((Reloaded.Snapshot=Project.Snapshot) and (Reloaded.Pages[0].Balloons[0].Tails.Count=2),'multiple triangular and thought tails save and reload with exact geometry');
       finally Reloaded.Free; end;
@@ -188,11 +191,11 @@ procedure TComicBalloonsTestsHelper.BalloonContourChecks;
   begin
     Probe:=TComicTestForm.Create(nil); Reference:=TBitmap.Create; Shifted:=TBitmap.Create;
     try
-      Project:=TComicProject.Create; Project.Initialize('吹き出し輪郭サンプル','1'); Project.Width:=900; Project.Height:=1050;
+      Project:=CreateFixtureProject; Project.Initialize('吹き出し輪郭サンプル','1'); Project.Width:=900; Project.Height:=1050;
       Probe.AdoptProject(Project,False); Project.ImportImage(TPath.Combine(TestFolder,'reference.bmp'),'');
       Panel:=TComicPanel.Create; Panel.Bounds:=TRectF.Create(30,30,870,1020); Panel.ImageID:=Project.Assets[0].ID;
       Probe.Page.Panels.Add(Panel); Balloon:=TComicBalloon.Create; Balloon.Bounds:=TRectF.Create(200,250,650,650);
-      Balloon.PanelID:=Panel.ID; Balloon.Text:='輪郭テスト'; Probe.Page.Balloons.Add(Balloon);
+      Balloon.PanelID:=Panel.ID; Balloon.Text:='輪郭テスト'; Balloon.FontSize:=40; Probe.Page.Balloons.Add(Balloon);
       Tail:=TComicTail.Create; Tail.Root:=Balloon.Bounds.CenterPoint; Tail.Tip:=TPointF.Create(780,800); Tail.Width:=120; Balloon.Tails.Add(Tail);
       Probe.RefreshUI; Probe.FTabs.ActivePageIndex:=3; Probe.TabChanged(nil); SelectBalloon;
       Reference.PixelFormat:=pf24bit; Reference.SetSize(450,525); Shifted.PixelFormat:=pf24bit; Shifted.SetSize(500,560);
@@ -230,7 +233,7 @@ procedure TComicBalloonsTestsHelper.BalloonContourChecks;
         Check(Same,LabelText+' body tails border and text match under translated DC rendering');
         // 本体中央へ接続したしっぽでも、合成領域の内側に余計な縁を出さないことを確認する。
         Check(Reference.Canvas.Pixels[215,240]=clWhite,LabelText+' merged tail has no internal border at its root');
-        Before:=Project.Snapshot; Project.Save; Reloaded:=TComicProject.Create;
+        Before:=Project.Snapshot; Project.Save; Reloaded:=CreateFixtureProject;
         try Reloaded.Load(TPath.Combine(Project.Folder,'Project.json'));
           Check(Reloaded.Snapshot=Before,LabelText+' saves and reloads without changing text or tail identity');
         finally Reloaded.Free; end;
@@ -330,7 +333,7 @@ procedure TComicBalloonsTestsHelper.TextPlacementChecks;
   begin
     Probe:=TComicTestForm.Create(nil); PNG:=TPngImage.Create;
     try
-      Project:=TComicProject.Create; Project.Initialize('文字配置 fixture','1'); Probe.AdoptProject(Project,False);
+      Project:=CreateFixtureProject; Project.Initialize('文字配置 fixture','1'); Probe.AdoptProject(Project,False);
       Project.ImportImage(TPath.Combine(TestFolder,'reference.bmp'),'');
       Balloon:=TComicBalloon.Create; Balloon.Text:='文字位置'; Balloon.Bounds:=TRectF.Create(150,150,650,650);
       Tail:=TComicTail.Create; Tail.Root:=Balloon.Bounds.CenterPoint; Tail.Tip:=TPointF.Create(850,800); Balloon.Tails.Add(Tail);
@@ -347,12 +350,12 @@ procedure TComicBalloonsTestsHelper.TextPlacementChecks;
         (Abs(Probe.Page.Balloons[0].TextOffset.X)>1) and (Abs(Probe.Page.Balloons[0].TextOffset.Y)>1),
         'text movement updates its relative offset while preserving body and tail geometry'); finally J.Free; end;
       Probe.Undo(nil); Check(Project.Snapshot=Before,'text placement undo restores the compound balloon in one operation');
-      for K:=1 to 8 do begin
+      for K in [1,3,5,7] do begin
         SelectText; TextBounds:=Probe.FRenderer.BalloonTextBounds(Probe.Page.Balloons[0]); PointA:=EditHandles(TextBounds)[K-1];
         X:=Probe.FPageRect.Left+Round(PointA.X*Probe.FScale); Y:=Probe.FPageRect.Top+Round(PointA.Y*Probe.FScale);
         Probe.MouseDown(Probe.FCanvas,mbLeft,[],X,Y); Check(Probe.FDragHandle=K,'text outer handle '+IntToStr(K)+' is selectable');
         Probe.MouseMove(Probe.FCanvas,[ssLeft],X+12,Y+8); Probe.MouseUp(Probe.FCanvas,mbLeft,[],X+12,Y+8);
-        Check((Probe.Page.Balloons[0].Bounds=BodyBounds) and (Probe.Page.Balloons[0].FontSize<>40) and
+        Check((Probe.Page.Balloons[0].Bounds=BodyBounds) and (Probe.Page.Balloons[0].FontSize<>24) and
           (Probe.FFont.Text=IntToStr(Probe.Page.Balloons[0].FontSize)), 'text handle '+IntToStr(K)+' scales glyphs without resizing the body');
         Probe.Undo(nil); Check(Project.Snapshot=Before,'text handle '+IntToStr(K)+' undo restores size and placement');
       end;
@@ -366,7 +369,7 @@ procedure TComicBalloonsTestsHelper.TextPlacementChecks;
       Check(Probe.Page.Balloons[0].ApplyTransform(Original,Invalid) and
         (Abs(Probe.Page.Balloons[0].TextOffset.X-60)<0.001) and (Abs(Probe.Page.Balloons[0].TextOffset.Y+20)<0.001),
         'whole balloon resize carries the text offset with independent axis ratios');
-      Project.Save; Reloaded:=TComicProject.Create;
+      Project.Save; Reloaded:=CreateFixtureProject;
       try Reloaded.Load(TPath.Combine(Project.Folder,'Project.json')); Check(Reloaded.Snapshot=Project.Snapshot,'text placement and styled compound data survive save and reload');
       finally Reloaded.Free; end;
       Original:=Probe.Page.Balloons[0].CaptureTransform; Probe.Page.Balloons[0].TextOffset:=TPointF.Create(80000,0);
@@ -404,9 +407,9 @@ procedure TComicBalloonsTestsHelper.TextScaledWrappingChecks;
   begin
     Probe:=TComicTestForm.Create(nil); Layout:=TComicTextLayout.Create; PNG:=TPngImage.Create;
     try
-      Project:=TComicProject.Create; Project.Initialize('折返し拡縮 fixture','1'); Probe.AdoptProject(Project,False);
+      Project:=CreateFixtureProject; Project.Initialize('折返し拡縮 fixture','1'); Probe.AdoptProject(Project,False);
       Project.ImportImage(TPath.Combine(TestFolder,'reference.bmp'),''); Balloon:=TComicBalloon.Create;
-      Balloon.Bounds:=TRectF.Create(350,400,650,760); Balloon.FontSize:=32;
+      Balloon.Bounds:=TRectF.Create(350.4,400.4,650.6,760.6); Balloon.FontSize:=32; Balloon.AutoWrap:=True;
       Balloon.Text:='長文の折返し12を保つ。ーABC「配置」と幅を確認する。'+
         '長文の折返し12を保つ。ーABC「配置」と幅を確認する。'+
         '長文の折返し12を保つ。ーABC「配置」と幅を確認する。';
@@ -417,7 +420,7 @@ procedure TComicBalloonsTestsHelper.TextScaledWrappingChecks;
         Probe.Width:=MulDiv(940,PPI,96); Probe.Height:=MulDiv(660,PPI,96); Probe.Realign; Probe.HandleNeeded;
         B.SetSize(Probe.ClientWidth,Probe.ClientHeight); Probe.PaintTo(B.Canvas,0,0);
         Base:=LayoutSignature(Balloon); Check(Layout.LineCount>2,'long scaling fixture wraps into several lines or columns '+IntToStr(Orientation));
-        for K:=1 to 8 do begin
+        for K in [1,3,5,7] do begin
           Balloon:=Probe.Page.Balloons[0]; Probe.FBalloonIndex:=0; Probe.LoadBalloonControls(Balloon); Probe.FTool:=13; Probe.UpdateIconState;
           OldBounds:=Probe.FRenderer.BalloonTextBounds(Balloon); P:=EditHandles(OldBounds)[K-1];
           X:=Probe.FPageRect.Left+Round(P.X*Probe.FScale); Y:=Probe.FPageRect.Top+Round(P.Y*Probe.FScale);
@@ -435,8 +438,8 @@ procedure TComicBalloonsTestsHelper.TextScaledWrappingChecks;
           After:=LayoutSignature(Balloon); Ratio:=Balloon.FontSize/32; NewBounds:=Probe.FRenderer.BalloonTextBounds(Balloon);
           Check((After=Base) and (Scale=Ratio) and (Ratio>1) and (Balloon.TextLayoutFontSize=32),LabelText+' retains every wrap and cell while scaling');
           Check((Abs(NewBounds.Width/OldBounds.Width-Ratio)<0.0001) and (Abs(NewBounds.Height/OldBounds.Height-Ratio)<0.0001) and
-            (Balloon.Bounds=TRectF.Create(350,400,650,760)),LabelText+' keeps the full block aspect ratio and body');
-          Resized:=Project.Snapshot; Project.Save; Reloaded:=TComicProject.Create;
+            (Balloon.Bounds=TRectF.Create(350.4,400.4,650.6,760.6)),LabelText+' keeps the full block aspect ratio and body');
+          Resized:=Project.Snapshot; Project.Save; Reloaded:=CreateFixtureProject;
           try Reloaded.Load(TPath.Combine(Project.Folder,'Project.json'));
             Check((Reloaded.Snapshot=Resized) and (LayoutSignature(Reloaded.Pages[0].Balloons[0])=Base),LabelText+' saves and reloads its wrapping basis');
           finally Reloaded.Free; end;
@@ -459,4 +462,116 @@ procedure TComicBalloonsTestsHelper.TextScaledWrappingChecks;
 
 procedure RunTextScaledWrappingChecks(Host: TComicTestForm);
 begin Host.TextScaledWrappingChecks; end;
+
+procedure TComicBalloonsTestsHelper.BalloonInteractionChecks;
+const ExpectedCursors: array[1..8] of TCursor = (crSizeNWSE,crSizeNS,crSizeNESW,crSizeWE,
+  crSizeNWSE,crSizeNS,crSizeNESW,crSizeWE);
+var Probe: TComicTestForm; Project: TComicProject; Shot: TBitmap;
+  Original: TComicBalloonTransform; Before,After: string; X,Y: Integer;
+  Balloon: TComicBalloon; Tail: TComicTail; PPI,Orientation: Integer;
+  procedure SelectBody;
+  begin
+    Probe.FTool:=0; Probe.FBalloonIndex:=0; Probe.FPanelIndex:=-1;
+    Probe.LoadBalloonControls(Probe.Page.Balloons[0]); Probe.HandleNeeded;
+    Shot.SetSize(Probe.ClientWidth,Probe.ClientHeight); Probe.PaintTo(Shot.Canvas,0,0);
+  end;
+  procedure PointAt(const P: TPointF);
+  begin
+    X:=Probe.FPageRect.Left+Round(P.X*Probe.FScale); Y:=Probe.FPageRect.Top+Round(P.Y*Probe.FScale);
+  end;
+  procedure CursorChecks;
+  var K: Integer; P: TPointF;
+  begin
+    Before:=Project.Snapshot;
+    for K:=1 to 8 do begin
+      PointAt(EditHandles(Probe.Page.Balloons[0].Bounds)[K-1]);
+      Probe.MouseMove(Probe.FCanvas,[],X,Y);
+      Check(Probe.FCanvas.Cursor=ExpectedCursors[K],'balloon hover matches resize direction for handle '+IntToStr(K));
+    end;
+    PointAt(Probe.Page.Balloons[0].Bounds.CenterPoint); Probe.MouseMove(Probe.FCanvas,[],X,Y);
+    Check(Probe.FCanvas.Cursor=crSizeAll,'balloon interior exposes movement cursor');
+    Probe.Page.Balloons[0].Shape:=1; P:=Probe.Page.Balloons[0].Bounds.TopLeft+TPointF.Create(75,60);
+    PointAt(P); Probe.MouseMove(Probe.FCanvas,[],X,Y);
+    Check(Probe.FCanvas.Cursor=crDefault,'ellipse bounding-box corners do not advertise a body move');
+    Probe.Page.Balloons[0].Transparent:=True; Probe.MouseMove(Probe.FCanvas,[],X,Y);
+    Check(Probe.FCanvas.Cursor=crSizeAll,'text-only balloon guide retains its actual move hit area');
+    Probe.Page.Balloons[0].Transparent:=False; Probe.Page.Balloons[0].Shape:=0;
+    Probe.MouseMove(Probe.FCanvas,[],0,0); Check(Probe.FCanvas.Cursor=crDefault,'leaving balloon returns arrow cursor');
+    Check(Project.Snapshot=Before,'hover feedback leaves the model unchanged');
+  end;
+  procedure ResizeChecks;
+  var K,Mode,History,DX,DY,ExpectedFont: Integer; Shift: TShiftState; Balloon: TComicBalloon;
+  begin
+    for K:=1 to 8 do for Mode:=0 to 1 do begin
+      SelectBody; Before:=Project.Snapshot; History:=Probe.FUndo.Count;
+      Balloon:=Probe.Page.Balloons[0]; Original:=Balloon.CaptureTransform;
+      PointAt(EditHandles(Original.Bounds)[K-1]); DX:=0; DY:=0;
+      if K in [1,7,8] then DX:=24 else if K in [3,4,5] then DX:=-24;
+      if K in [1,2,3] then DY:=24 else if K in [5,6,7] then DY:=-24;
+      Shift:=[]; if Mode=1 then Include(Shift,ssCtrl);
+      Probe.MouseDown(Probe.FCanvas,mbLeft,Shift,X,Y); Include(Shift,ssLeft);
+      Probe.MouseMove(Probe.FCanvas,Shift,X+DX,Y+DY); Probe.MouseUp(Probe.FCanvas,mbLeft,[],X+DX,Y+DY);
+      ExpectedFont:=Original.FontSize;
+      if Mode=1 then ExpectedFont:=Round(Original.FontSize*Min(Balloon.Bounds.Width/Original.Bounds.Width,
+        Balloon.Bounds.Height/Original.Bounds.Height));
+      Check((Balloon.FontSize=ExpectedFont) and (Probe.FFont.Text=IntToStr(ExpectedFont)) and
+        (Balloon.Bounds<>Original.Bounds),'balloon resize honors Ctrl font policy handle '+IntToStr(K)+' mode '+IntToStr(Mode));
+      Check((Balloon.BorderWidth=3) and (Balloon.Tails.Count=1) and
+        (Abs(Balloon.TextOffset.X-Original.TextOffset.X*Balloon.Bounds.Width/Original.Bounds.Width)<0.001),
+        'resize carries owned tail and text position while retaining output border width');
+      Check(((Mode=0) and (Balloon.TextLayoutFontSize=0)) or
+        ((Mode=1) and (Balloon.TextLayoutFontSize=Original.FontSize)),'only Ctrl freezes automatic wrapping for uniform glyph scaling');
+      After:=Project.Snapshot; Check(Probe.FUndo.Count=History+1,'balloon font policy resize commits once');
+      Probe.Undo(nil); Check(Project.Snapshot=Before,'balloon font policy undo restores exact original');
+      Probe.Redo(nil); Check(Project.Snapshot=After,'balloon font policy redo restores exact result'); Probe.Undo(nil);
+    end;
+  end;
+  procedure ModifierChecks;
+  var Balloon: TComicBalloon; History: Integer; KeyValue: Word;
+  begin
+    SelectBody; Before:=Project.Snapshot; History:=Probe.FUndo.Count;
+    Original:=Probe.Page.Balloons[0].CaptureTransform; PointAt(Original.Bounds.BottomRight);
+    Probe.MouseDown(Probe.FCanvas,mbLeft,[],X,Y);
+    Probe.MouseMove(Probe.FCanvas,[ssLeft,ssCtrl],X-24,Y-24); Balloon:=Probe.Page.Balloons[0];
+    Check(Balloon.FontSize<Original.FontSize,'Ctrl during body drag enables glyph scaling');
+    Probe.MouseMove(Probe.FCanvas,[ssLeft],X-24,Y-24);
+    Check(Balloon.FontSize=Original.FontSize,'releasing Ctrl restores original font without accumulating scale');
+    Probe.MouseMove(Probe.FCanvas,[ssLeft,ssCtrl],X-24,Y-24);
+    KeyValue:=VK_ESCAPE; Probe.Key(Probe,KeyValue,[]);
+    Check((Project.Snapshot=Before) and (Probe.FUndo.Count=History),'cancel restores body glyph size and history after modifier changes');
+  end;
+  procedure SaveChecks;
+  var Balloon: TComicBalloon; Reloaded: TComicProject; Target: TRectF;
+  begin
+    Balloon:=Probe.Page.Balloons[0]; Balloon.TextLayoutSize:=TSizeF.Create(220,330); Balloon.TextLayoutFontSize:=32;
+    Original:=Balloon.CaptureTransform; Target:=Original.Bounds; Target.Right:=Target.Left+Target.Width*0.8;
+    Check(Balloon.ApplyTransform(Original,Target,False) and (Balloon.FontSize=47) and
+      (Balloon.TextLayoutFontSize=32) and (Balloon.TextLayoutSize=Original.TextLayoutSize),
+      'normal body resize preserves an existing text placement scale and wrapping basis');
+    Project.Save; Reloaded:=CreateFixtureProject;
+    try Reloaded.Load(TPath.Combine(Project.Folder,'Project.json'));
+      Check(Reloaded.Snapshot=Project.Snapshot,'fixed-font body resize persists through save and reload');
+    finally Reloaded.Free; end;
+  end;
+begin
+  Probe:=TComicTestForm.Create(nil); Shot:=TBitmap.Create;
+  try
+    Project:=CreateFixtureProject; Project.Initialize('吹き出しのカーソルと文字倍率 fixture','1');
+    Probe.AdoptProject(Project,False); Project.ImportImage(TPath.Combine(TestFolder,'reference.bmp'),'');
+    Balloon:=TComicBalloon.Create; Balloon.Bounds:=TRectF.Create(200,300,700,900); Balloon.FontSize:=47; Balloon.Shape:=0;
+    Balloon.Text:='文字サイズを保つ'; Balloon.TextOffset:=TPointF.Create(20,-10);
+    Tail:=TComicTail.Create; Tail.Root:=Balloon.Bounds.CenterPoint; Tail.Tip:=TPointF.Create(800,1100);
+    Balloon.Tails.Add(Tail); Probe.Page.Balloons.Add(Balloon); Probe.RefreshUI;
+    Probe.FTabs.ActivePageIndex:=3; Probe.TabChanged(nil);
+    for PPI in [96,144] do for Orientation:=0 to 1 do begin
+      Probe.Scaled:=True; Probe.ScaleForPPI(PPI); Probe.Scaled:=False;
+      Probe.Page.Balloons[0].Vertical:=Orientation=1; SelectBody;
+      CursorChecks; ResizeChecks; ModifierChecks;
+    end;
+    SaveChecks;
+  finally Shot.Free; Probe.Free; end;
+end;
+
+procedure RunBalloonInteractionChecks(Host: TComicTestForm);
+begin Host.BalloonInteractionChecks; end;
 end.

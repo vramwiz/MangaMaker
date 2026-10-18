@@ -68,3 +68,28 @@ $state.data.project
 適用済み生成指示は `status.data.project.generationInstructions`。共通プリセットの後日編集に影響されない本文スナップショットを、個別の画像指示と組み合わせる。正式な作品保存はユーザーの保存操作で行い、パイプ登録は作業データとUndoへ反映する。画像管理中は、その管理操作の履歴へまとめる。
 
 この入口はユーザーからの生成指示に従って状態照会・ファイル登録を行うためのもの。アプリからCodexへ自動で生成依頼を送る動作は含まない。
+
+## 台本の連続生成とCodexからの画像受信
+
+既存の画像管理を開いたまま、ユーザーの生成指示に従って以下を使用する。作品IDは `status` の現在値を使う。
+
+| action | 入力 | data |
+| --- | --- | --- |
+| read_script | projectId | source（原文）、plan、sequenceActive、generatedCount、activeAssetId、stage、status |
+| generation_context | projectId、assetId | context、fingerprint |
+| start_script_generation | projectId、任意limit（0～10000の整数、0/省略は全件） | started、status |
+| cancel_generation | projectId | cancelled |
+
+`plan.items` は台本順に `scriptId` / `assetId` / `page` / `status` / `reason` を返す。状態は completed（取得済）、ready（生成可能）、waiting（背景/初登場待ち）、deferred（未完・保留・参照不足）。`nextAssetId` は次のready項目。取得済みの判定は管理ファイルの実在も確認する。台本を再読込して不足を修正した後に再開できる。
+
+`generation_context` は通常の画像生成と同じ説明・適用済み共通指示・背景・登録人物・固有人物の初登場画像を返す。`referenceFiles` の画像を読み、内蔵画像生成で1枚を生成する。`characterContinuity` の画像は指定された役の外見の参照に用いる。群衆は固定しない。
+
+Codexで生成したファイルは、既存の `register_image` で対象UIDへ登録する。`expectedFileName` に生成開始時の `asset.file`（未取得なら空文字）を、`expectedContext` に取得した `fingerprint` を指定できる。条件や参照画像が変わった場合は登録を拒否する。結果が不明なときは対象を再照会する。ユーザーの正式保存操作は従来どおりで、登録は作業データとUndoへ反映する。
+
+```json
+{"version":1,"action":"start_script_generation","projectId":"作品ID","limit":2}
+```
+
+連続処理は既存の専用Codex接続・画像受信処理を繰り返す。各画像を登録してから次を選び直す。取得済み画像を上書きしない。失敗、中止、作品/管理画面の切替、生成条件変更では停止し、以前の完了画像は保持する。管理画面を閉じた後に裏で継続しない。画像の登録に成功し表示更新だけ失敗した場合は登録済みとして扱う。
+
+現時点の自動処理範囲は画像取得まで。セリフは `source` から参照できるが、吹き出しの作成/配置/文字反映は従来の編集操作。画像に文字・吹き出しを焼き込む実験や自動配置は別途判断する。

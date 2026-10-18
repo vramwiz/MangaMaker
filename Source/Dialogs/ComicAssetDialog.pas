@@ -2,13 +2,14 @@
 
 // 責務：人物・場面の管理画面を提供し、共有ライブラリと作品素材の保存範囲を区別する。
 interface
-uses Winapi.Windows, System.SysUtils, System.Classes, System.IOUtils, System.Generics.Collections,
+uses Winapi.Windows, System.SysUtils, System.Classes, System.UITypes, System.IOUtils, System.Generics.Collections,
   Vcl.Forms, Vcl.Controls, Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.ComCtrls,
-  Vcl.Dialogs, Vcl.Graphics, Vcl.Menus, Vcl.Imaging.pngimage, Vcl.Imaging.jpeg, ComicModel, ComicAssetEditing, ComicCharacterRefs;
+  Vcl.Dialogs, Vcl.Graphics, Vcl.Menus, Vcl.Imaging.pngimage, Vcl.Imaging.jpeg, ComicModel, ComicAssetEditing, ComicCharacterRefs, ComicScriptAssist;
 type
   TAssetDialog = class(TForm)
   private
     FList: TObjectList<TComicAsset>;
+    FRetired: TObjectList<TComicAsset>;
     FProject: TComicProject;
     FCharacters,FWritable: Boolean;
     FTree: TTreeView;
@@ -25,14 +26,23 @@ type
     FDragRootExpanded: Boolean;
     FPreviewError,FBaseHint: string;
     FCharacterList: TObjectList<TComicAsset>;
-    FReferences: TButton;
+    FReferences: TMenuItem;
     FAlternate,FTitle: TMenuItem;
+    FAddScene,FAddChild,FChooseImage,FRemoveScene: TMenuItem;
     FLoading: Boolean;
     FGenerate,FCancelGeneration: TButton;
     FGenerationStatus: TLabel;
     FGenerationBusy: Boolean;
     FGenerationSessionID: string;
     FGenerateHandler,FCancelHandler: TNotifyEvent;
+    FScriptLoad: TMenuItem;
+    FScriptGenerate: TButton;
+    FScriptGenerateHandler: TNotifyEvent;
+    FClosing,FCloseCommitted: Boolean;
+    procedure BuildImageMenu;
+    procedure DeleteSceneClick(Sender: TObject);
+    procedure ScriptGenerateClick(Sender: TObject);
+    procedure LoadScriptClick(Sender: TObject);
     procedure GenerateClick(Sender: TObject);
     procedure CancelGenerateClick(Sender: TObject);
     procedure UpdateGenerateButton;
@@ -51,14 +61,19 @@ type
     procedure TreeDragDrop(Sender,Source: TObject; X,Y: Integer);
     procedure ChooseReferences(Sender: TObject);
     procedure SceneVariantClick(Sender: TObject);
+  protected
+    function ConfirmSceneRemoval(const Message: string): Boolean; virtual;
+    procedure ReportSaveError(const Message: string); virtual;
+    procedure PersistChanges; virtual;
   public
     constructor CreateManager(AOwner: TComponent; List: TObjectList<TComicAsset>;
       Project: TComicProject; Characters: Boolean; Writable: Boolean=True; PresetHandler: TNotifyEvent=nil;
-      CharacterList: TObjectList<TComicAsset>=nil; GenerateHandler: TNotifyEvent=nil; CancelHandler: TNotifyEvent=nil);
+      CharacterList: TObjectList<TComicAsset>=nil; GenerateHandler: TNotifyEvent=nil; CancelHandler: TNotifyEvent=nil; ScriptGenerateHandler: TNotifyEvent=nil);
     destructor Destroy; override;
     procedure SetGenerationBusy(Busy: Boolean; const Status: string);
     procedure RefreshFromGenerated(const AssetID: string; Preview: TGraphic); virtual;
     property GenerateButton: TButton read FGenerate;
+    property ScriptGenerateButton: TButton read FScriptGenerate;
     property GenerationStatus: TLabel read FGenerationStatus;
     property GenerationBusy: Boolean read FGenerationBusy;
     property GenerationSessionID: string read FGenerationSessionID;
@@ -70,6 +85,8 @@ type
     procedure MoveAsset(const MovingID,BeforeID: string);
     procedure AddSceneVariant(const Mode: string);
     procedure ApplyReferences(const IDs: TArray<string>);
+    function LoadScriptText(const Text: string): TScriptImportResult;
+    procedure DeleteSelectedScene;
     property CurrentAsset: TComicAsset read FCurrent;
     property IsCharacters: Boolean read FCharacters;
     property DraftName: TEdit read FName;
@@ -88,33 +105,47 @@ procedure TAssetDialog.SelectAsset(const ID: string);
 var Node: TTreeNode;
 begin for Node in FTree.Items do if (Node.Data<>nil) and (TComicAsset(Node.Data).ID=ID) then begin FTree.Selected:=Node; Exit; end; end;
 constructor TAssetDialog.CreateManager(AOwner: TComponent; List: TObjectList<TComicAsset>;
-  Project: TComicProject; Characters: Boolean; Writable: Boolean; PresetHandler: TNotifyEvent; CharacterList: TObjectList<TComicAsset>; GenerateHandler,CancelHandler: TNotifyEvent);
+  Project: TComicProject; Characters: Boolean; Writable: Boolean; PresetHandler: TNotifyEvent; CharacterList: TObjectList<TComicAsset>; GenerateHandler,CancelHandler: TNotifyEvent; ScriptGenerateHandler: TNotifyEvent);
 var Left,Right,Bar,Details: TPanel; B: TButton; L: TLabel;
   procedure Button(const Caption: string; X,W,Tag: Integer; Handler: TNotifyEvent);
   begin B:=TButton.Create(Self); B.Parent:=Bar; B.SetBounds(X,10,W,32); B.Caption:=Caption; B.Tag:=Tag; B.OnClick:=Handler; B.Enabled:=Writable or (Caption='保存して閉じる'); end;
 begin
   inherited CreateNew(AOwner); FList:=List; FProject:=Project; FCharacters:=Characters; FWritable:=Writable; FCharacterList:=CharacterList;
-  FGenerateHandler:=GenerateHandler; FCancelHandler:=CancelHandler; FGenerationSessionID:=NewUID;
+  FRetired:=TObjectList<TComicAsset>.Create;
+  FScriptGenerateHandler:=ScriptGenerateHandler; FGenerateHandler:=GenerateHandler; FCancelHandler:=CancelHandler; FGenerationSessionID:=NewUID;
   if Characters then NormalizeCharacters(List);
   Position:=poOwnerFormCenter; Width:=940; Height:=680; Constraints.MinWidth:=760; Constraints.MinHeight:=580;
   Font.Name:='Yu Gothic UI'; Font.Size:=10;
   if Characters then Caption:='キャラクター管理 — 共通ライブラリ' else Caption:='画像管理 — '+Project.Title;
   Bar:=TPanel.Create(Self); Bar.Parent:=Self; Bar.Align:=alBottom; Bar.Height:=54; Bar.BevelOuter:=bvNone;
-  if Characters then begin Button('人物を追加',12,130,0,AddItem); Button('服装を追加',150,130,1,AddItem); end
-  else begin Button('新規場面',12,130,0,AddItem); Button('派生画像を追加',150,160,1,AddItem); end;
-  Button('画像を登録',324,130,0,ChooseImage); Button('保存して閉じる',654,220,0,SaveClick);
+  if Characters then begin Button('人物を追加',12,130,0,AddItem); Button('服装を追加',150,130,1,AddItem); end;
+  if Characters then begin Button('画像を登録',324,130,0,ChooseImage); Button('保存して閉じる',654,220,0,SaveClick); end;
   if not Characters and Assigned(PresetHandler) then Button('生成プリセット',466,170,0,PresetHandler);
   if Assigned(GenerateHandler) then begin
     Bar.Height:=102;
     FGenerate:=TButton.Create(Self); FGenerate.Parent:=Bar; FGenerate.SetBounds(12,56,200,34);
+    if not Characters then FGenerate.Top:=10;
     FGenerate.Caption:='Codexで画像生成'; FGenerate.OnClick:=GenerateClick;
     FCancelGeneration:=TButton.Create(Self); FCancelGeneration.Parent:=Bar; FCancelGeneration.SetBounds(220,56,100,34);
     FCancelGeneration.Caption:='生成を中止'; FCancelGeneration.OnClick:=CancelGenerateClick; FCancelGeneration.Enabled:=False;
+    if not Characters then FCancelGeneration.Top:=10;
     FGenerationStatus:=TLabel.Create(Self); FGenerationStatus.Parent:=Bar; FGenerationStatus.SetBounds(330,56,580,38);
     FGenerationStatus.AutoSize:=False; FGenerationStatus.WordWrap:=True; FGenerationStatus.Anchors:=[akLeft,akTop,akRight];
     FGenerationStatus.Caption:='対象の名前・説明を入力して、生成ボタンを押してください。';
   end;
+  if not Characters then begin
+    if Assigned(ScriptGenerateHandler) then begin
+      FScriptGenerate:=TButton.Create(Self); FScriptGenerate.Parent:=Bar;
+      FScriptGenerate.SetBounds(12,56,300,32); FScriptGenerate.Caption:='台本の未取得画像を連続生成';
+      FScriptGenerate.OnClick:=ScriptGenerateClick;
+    end;
+    Bar.Height:=102;
+  end;
   Left:=TPanel.Create(Self); Left.Parent:=Self; Left.Align:=alLeft; Left.Width:=250; Left.BevelOuter:=bvNone;
+  if not Characters then begin
+    L:=TLabel.Create(Self); L.Parent:=Left; L.Align:=alTop; L.AutoSize:=False; L.Height:=44; L.WordWrap:=True;
+    L.Caption:='一覧を右クリック：追加・登録・削除'+sLineBreak+'空欄でも新規場面を追加できます。';
+  end;
   FTree:=TTreeView.Create(Self); FTree.Parent:=Left; FTree.Align:=alClient; FTree.ReadOnly:=True; FTree.HideSelection:=False; FTree.OnChange:=Change;
   if Characters then begin
     FTree.DragMode:=dmAutomatic; FTree.OnStartDrag:=StartTreeDrag; FTree.OnEndDrag:=EndTreeDrag;
@@ -123,8 +154,7 @@ begin
     FPromote:=TMenuItem.Create(Self); FPromote.Caption:='これを親にする'; FPromote.OnClick:=PromoteClick; FPopup.Items.Add(FPromote);
   end else begin
     FPopup:=TPopupMenu.Create(Self); FPopup.OnPopup:=Popup; FTree.PopupMenu:=FPopup; FTree.RightClickSelect:=True;
-    FAlternate:=TMenuItem.Create(Self); FAlternate.Caption:='別位置の背景を追加'; FAlternate.Tag:=0; FAlternate.OnClick:=SceneVariantClick; FPopup.Items.Add(FAlternate);
-    FTitle:=TMenuItem.Create(Self); FTitle.Caption:='タイトルを追加'; FTitle.Tag:=1; FTitle.OnClick:=SceneVariantClick; FPopup.Items.Add(FTitle);
+    BuildImageMenu;
   end;
   Right:=TPanel.Create(Self); Right.Parent:=Self; Right.Align:=alClient; Right.BevelOuter:=bvNone; Right.Padding.SetBounds(18,16,18,16);
   if Characters then begin
@@ -135,14 +165,10 @@ begin
   if Characters then begin L.Caption:='服装／見た目の状態名'; L.Top:=54; end;
   FName:=TEdit.Create(Self); FName.Parent:=Right; FName.Align:=alTop; FName.Height:=30;
   if Characters then FName.Top:=78;
-  if not Characters then begin
-    FReferences:=TButton.Create(Self); FReferences.Parent:=Right; FReferences.Align:=alTop; FReferences.Height:=34;
-    FReferences.Top:=54; FReferences.Caption:='参照する人物・服装: 0件'; FReferences.OnClick:=ChooseReferences;
-  end;
   FHint:=TLabel.Create(Self); FHint.Parent:=Right; FHint.AutoSize:=False; FHint.Align:=alBottom; FHint.Height:=44; FHint.WordWrap:=True;
   FHint.Caption:='名前と参照画像を登録してください。画像は管理フォルダーにコピーして保持します。';
   if not FWritable then begin
-    Caption:=Caption+'（読み取りのみ）'; B.Caption:='閉じる';
+    Caption:=Caption+'（読み取りのみ）'; if Characters then B.Caption:='閉じる';
     FHint.Caption:='ライブラリの読込に失敗したため保存を停止しています。元ファイルを確認・修復してから管理画面を開き直してください。';
   end;
   FNotes:=TMemo.Create(Self); FNotes.Parent:=Right; FNotes.Align:=alBottom; FNotes.Height:=130; FNotes.ScrollBars:=ssVertical;
@@ -158,18 +184,68 @@ begin
   FBaseHint:=FHint.Caption; OnCloseQuery:=CloseCheck; BuildTree;
   if not Characters then SetGenerationSummary(Project.GenerationPresetName,Project.GenerationInstructions);
 end;
+procedure TAssetDialog.BuildImageMenu;
+  function Item(const Caption: string; Tag: Integer; Handler: TNotifyEvent): TMenuItem;
+  begin
+    Result:=TMenuItem.Create(Self); Result.Caption:=Caption; Result.Tag:=Tag; Result.OnClick:=Handler; FPopup.Items.Add(Result);
+  end;
+begin
+  // 空のツリーでも新規追加と台本読込を使える。生成条件のプリセットはCodex用ボタンとして残す。
+  FAddScene:=Item('新規場面',0,AddItem);
+  FAlternate:=Item('場面移動',0,SceneVariantClick);
+  FAlternate.Hint:='同じ場面の別位置の背景を追加します。元の場面は保持します。';
+  FAddChild:=Item('コマを作成',1,AddItem); FTitle:=Item('タイトルを追加',1,SceneVariantClick);
+  Item('-',0,nil); FChooseImage:=Item('選択項目に画像を登録...',0,ChooseImage);
+  FReferences:=Item('参照する人物・服装: 0件',0,ChooseReferences);
+  FScriptLoad:=Item('台本を読み込む／補完...',0,LoadScriptClick);
+  Item('-',0,nil); FRemoveScene:=Item('削除',0,DeleteSceneClick);
+  // メニューは一覧だけに割り当てる。VCLは入力欄の親階層からこのショートカットを参照しない。
+  FRemoveScene.ShortCut:=ShortCut(VK_DELETE,[]);
+end;
 destructor TAssetDialog.Destroy;
-begin if Assigned(FCancelHandler) then FCancelHandler(Self); inherited; end;
+begin if Assigned(FCancelHandler) then FCancelHandler(Self); FRetired.Free; inherited; end;
 procedure TAssetDialog.UpdateGenerateButton;
-begin if FGenerate<>nil then FGenerate.Enabled:=FWritable and (FCurrent<>nil) and not FGenerationBusy; end;
+begin
+  // ポップアップを開く前のDelでも、最新の選択・生成状態・読み取り専用の条件を使う。
+  if FRemoveScene<>nil then FRemoveScene.Enabled:=FWritable and (FCurrent<>nil) and not FGenerationBusy;
+  if FGenerate<>nil then FGenerate.Enabled:=FWritable and (FCurrent<>nil) and not FGenerationBusy;
+  if FScriptGenerate<>nil then FScriptGenerate.Enabled:=FWritable and not FGenerationBusy and
+    (FProject<>nil) and (FProject.ScriptSource<>'');
+end;
 procedure TAssetDialog.SetGenerationBusy(Busy: Boolean; const Status: string);
 begin
   FGenerationBusy:=Busy; UpdateGenerateButton;
+  if FScriptLoad<>nil then FScriptLoad.Enabled:=FWritable and not Busy;
   if FCancelGeneration<>nil then FCancelGeneration.Enabled:=Busy;
   if FGenerationStatus<>nil then FGenerationStatus.Caption:=Status;
 end;
+procedure TAssetDialog.ScriptGenerateClick(Sender: TObject);
+begin
+  if FWritable and not FGenerationBusy and Assigned(FScriptGenerateHandler) then begin Store; FScriptGenerateHandler(Self); end;
+end;
 procedure TAssetDialog.GenerateClick(Sender: TObject);
 begin if FWritable and not FGenerationBusy and (FCurrent<>nil) and Assigned(FGenerateHandler) then begin Store; FGenerateHandler(Self); end; end;
+function TAssetDialog.LoadScriptText(const Text: string): TScriptImportResult;
+begin
+  if FCharacters or not FWritable or FGenerationBusy then raise Exception.Create('画像管理の生成停止中に台本を読み込んでください。');
+  Store;
+  try Result:=ImportComicScript(FProject,FCharacterList,Text);
+  except FCurrent:=nil; BuildTree; raise; end;
+  BuildTree; UpdateGenerateButton;
+  if FGenerationStatus<>nil then FGenerationStatus.Caption:=Result.Summary else FHint.Caption:=Result.Summary;
+end;
+procedure TAssetDialog.LoadScriptClick(Sender: TObject);
+var D: TOpenDialog;
+begin
+  D:=TOpenDialog.Create(Self);
+  try
+    D.Filter:='台本テキスト (*.txt)|*.txt'; D.Options:=[ofFileMustExist,ofPathMustExist,ofNoChangeDir,ofEnableSizing];
+    if D.Execute then begin
+      if TFile.GetSize(D.FileName)>4*1024*1024 then raise Exception.Create('台本は4MB以下にしてください。');
+      LoadScriptText(TFile.ReadAllText(D.FileName,TEncoding.UTF8));
+    end;
+  finally D.Free; end;
+end;
 procedure TAssetDialog.CancelGenerateClick(Sender: TObject);
 begin if Assigned(FCancelHandler) then FCancelHandler(Self); end;
 procedure TAssetDialog.RefreshFromGenerated(const AssetID: string; Preview: TGraphic);
@@ -257,9 +333,9 @@ end;
 procedure TAssetDialog.AddItem(Sender: TObject);
 var A: TComicAsset; Parent,Mode: string;
 begin
-  if not FWritable then Exit;
+  if not FWritable or (not FCharacters and FGenerationBusy) then Exit;
   Store; Parent:='';
-  if TButton(Sender).Tag=1 then begin
+  if TComponent(Sender).Tag=1 then begin
     if FCurrent=nil then begin ShowMessage('親となる項目を選択してください。'); Exit; end;
     Parent:=FCurrent.ID; if FCurrent.ParentID<>'' then Parent:=FCurrent.ParentID;
   end;
@@ -267,16 +343,18 @@ begin
   else begin
     if Parent='' then Mode:='scene' else Mode:='child';
     A:=NewSceneAsset(FList,FCurrent,Mode,'新しい場面','',FProject.Title,FProject.Episode);
-    if Parent<>'' then A.Name:='派生画像';
+    if Parent<>'' then A.Name:='コマ画像';
   end;
   FList.Add(A); if FCharacters then NormalizeCharacters(FList);
   FCurrent:=A; BuildTree;
-  if FCharacters and (Parent='') then begin FCharacterName.SetFocus; FCharacterName.SelectAll; end else begin FName.SetFocus; FName.SelectAll; end;
+  if FCharacters and (Parent='') then begin
+    if Showing and FCharacterName.CanFocus then FCharacterName.SetFocus; FCharacterName.SelectAll;
+  end else begin if Showing and FName.CanFocus then FName.SetFocus; FName.SelectAll; end;
 end;
 procedure TAssetDialog.ChooseImage(Sender: TObject);
 var D: TOpenDialog; P: TPicture; Root,Relative,Path: string;
 begin
-  if not FWritable then Exit;
+  if not FWritable or FGenerationBusy then Exit;
   if FCurrent=nil then begin ShowMessage('先に人物または場面を追加してください。'); Exit; end;
   D:=TOpenDialog.Create(Self); P:=TPicture.Create;
   try
@@ -295,12 +373,38 @@ begin ModalResult:=mrOK; end;
 procedure TAssetDialog.Popup(Sender: TObject);
 begin
   if FCharacters then FPromote.Enabled:=FWritable and (FCurrent<>nil) and (FCurrent.ParentID<>'')
-  else begin FAlternate.Enabled:=FWritable and (FCurrent<>nil); FTitle.Enabled:=FWritable and (FCurrent<>nil) and (FCurrent.ParentID<>''); end;
+  else begin
+    FAddScene.Enabled:=FWritable and not FGenerationBusy; FAddChild.Enabled:=FAddScene.Enabled and (FCurrent<>nil);
+    FAlternate.Enabled:=FAddChild.Enabled; FTitle.Enabled:=FAddChild.Enabled and (FCurrent.ParentID<>'');
+    FChooseImage.Enabled:=FAddChild.Enabled; FRemoveScene.Enabled:=FAddChild.Enabled;
+    FScriptLoad.Enabled:=FAddScene.Enabled;
+    FReferences.Enabled:=FAddChild.Enabled and (FCurrent.ParentID<>'') and (FCharacterList<>nil);
+  end;
+end;
+procedure TAssetDialog.DeleteSceneClick(Sender: TObject);
+begin DeleteSelectedScene; end;
+function TAssetDialog.ConfirmSceneRemoval(const Message: string): Boolean;
+begin Result:=MessageDlg(Message,mtConfirmation,[mbYes,mbNo],0)=mrYes; end;
+procedure TAssetDialog.DeleteSelectedScene;
+var Info: TComicSceneRemoval; Asset: TComicAsset; Name: string;
+begin
+  if FCharacters or not FWritable or FGenerationBusy or (FCurrent=nil) then Exit;
+  Asset:=FCurrent; Info:=SceneRemoval(FProject,Asset); Name:=Trim(FName.Text); if Name='' then Name:=Asset.Name;
+  if not Info.CanRemove then begin MessageDlg(Info.Description(Name),mtInformation,[mbOK],0); Exit; end;
+  // 否定した場合は入力をStoreせず、登録・参照・ファイルを一切変更しない。
+  if not ConfirmSceneRemoval(Info.Description(Name)) then Exit;
+  Store; FLoading:=True;
+  try
+    // 背面の画像一覧が旧ポインターを持つ間は生存させ、管理画面終了時の一覧更新後に解放する。
+    FTree.Items.Clear; FCurrent:=nil;
+    try RemoveSceneRegistration(FProject,Asset,FRetired);
+    except FCurrent:=Asset; raise; end;
+  finally FLoading:=False; BuildTree; end;
 end;
 procedure TAssetDialog.ChooseReferences(Sender: TObject);
 var Dialog: TComicCharacterRefDialog;
 begin
-  if (FCurrent=nil) or not FWritable or FCharacters or (FCurrent.ParentID='') or (FCharacterList=nil) then Exit;
+  if (FCurrent=nil) or not FWritable or FGenerationBusy or FCharacters or (FCurrent.ParentID='') or (FCharacterList=nil) then Exit;
   Dialog:=TComicCharacterRefDialog.CreateSelector(Self,FCharacterList,FCurrent.CharacterRefs);
   try if Dialog.ShowModal=mrOK then ApplyReferences(Dialog.SelectedIDs); finally Dialog.Free; end;
 end;
@@ -314,7 +418,7 @@ begin if TMenuItem(Sender).Tag=0 then AddSceneVariant('alternate_scene') else Ad
 procedure TAssetDialog.AddSceneVariant(const Mode: string);
 var Asset: TComicAsset; Name: string;
 begin
-  if FCharacters or not FWritable or (FCurrent=nil) then Exit; Store;
+  if FCharacters or not FWritable or FGenerationBusy or (FCurrent=nil) then Exit; Store;
   if Mode='alternate_scene' then Name:='別位置の背景' else if Mode='title' then Name:='タイトル用画像' else raise Exception.Create('追加方式が不正です。');
   Asset:=NewSceneAsset(FList,FCurrent,Mode,Name,'',FProject.Title,FProject.Episode); FList.Add(Asset); FCurrent:=Asset; BuildTree;
 end;
@@ -370,9 +474,25 @@ begin
 end;
 procedure TAssetDialog.CloseCheck(Sender: TObject; var CanClose: Boolean);
 begin
-  if Assigned(FCancelHandler) then FCancelHandler(Self);
-  if not FWritable then Exit;
-  Store;
-  if FCharacters then WriteAssets(FList,TPath.Combine(DataRoot,'Characters\Library.json'));
+  CanClose:=FCloseCommitted; if FCloseCommitted or FClosing then Exit;
+  FClosing:=True;
+  try
+    try
+      if Assigned(FCancelHandler) then FCancelHandler(Self);
+      if FWritable then PersistChanges;
+      FCloseCommitted:=True; CanClose:=True;
+    except on E: Exception do begin
+      ModalResult:=mrNone; CanClose:=False;
+      ReportSaveError('保存できないため「'+Caption+'」を閉じません。入力を保持しています。'+sLineBreak+E.Message);
+    end; end;
+  finally FClosing:=False; end;
 end;
+procedure TAssetDialog.PersistChanges;
+begin
+  Store;
+  if FCharacters then WriteAssets(FList,TPath.Combine(DataRoot,'Characters\Library.json'))
+  else AtomicWrite(TPath.Combine(FProject.Folder,'Draft.json'),FProject.Snapshot);
+end;
+procedure TAssetDialog.ReportSaveError(const Message: string);
+begin MessageDlg(Message,mtError,[mbOK],0); end;
 end.

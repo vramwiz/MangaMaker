@@ -43,7 +43,7 @@ procedure TComicWorkspaceTestsHelper.ViewportChecks;
     Outer:=FProject.Snapshot;
     Probe:=TComicTestForm.Create(nil); Bitmap:=TBitmap.Create; PNG:=TPngImage.Create;
     try
-      Project:=TComicProject.Create; Project.Initialize('表示操作テスト','1');
+      Project:=CreateFixtureProject; Project.Initialize('表示操作テスト','1');
       Asset:=Project.ImportImage(TPath.Combine(TestFolder,'reference.bmp'),'');
       Panel:=TComicPanel.Create; Panel.Bounds:=TRectF.Create(100,120,500,550); Panel.ImageID:=Asset.ID; Project.Pages[0].Panels.Add(Panel);
       Overlay:=TComicOverlay.Create; Overlay.Bounds:=TRectF.Create(0.2,0.2,0.7,0.7); Overlay.MaterialID:=Probe.FEffectMaterials[0].ID; Overlay.FileName:=Probe.FEffectMaterials[0].FileName; Panel.Overlays.Add(Overlay);
@@ -131,7 +131,7 @@ procedure TComicWorkspaceTestsHelper.ViewportChecks;
         Check(Hypot(After.X-World.X,After.Y-World.Y)<0.01,'zoom and pan retain frame snapping coordinates '+IntToStr(PPI));
         Untouched('all navigation and cancelled priority probes preserve data');
       end;
-      Probe.MouseDown(nil,mbMiddle,[],10,10); Project:=TComicProject.Create; Project.Folder:=Probe.FProject.Folder; Project.Restore(Probe.FProject.Snapshot);
+      Probe.MouseDown(nil,mbMiddle,[],10,10); Project:=CreateFixtureProject; Project.Folder:=Probe.FProject.Folder; Project.Restore(Probe.FProject.Snapshot);
       Probe.AdoptProject(Project,False);
       Check(not Probe.FViewPanning and SameValue(Probe.FViewZoom,1),'project replacement releases view pan and resets camera');
       Check(FProject.Snapshot=Outer,'viewport checks preserve the outer smoke-test project');
@@ -174,7 +174,7 @@ procedure TComicWorkspaceTestsHelper.ExportReviewChecks;
   begin
     Original:=FProject.Snapshot; Probe:=TComicTestForm.Create(nil); D:=nil; PNG:=TPngImage.Create;
     try
-      Project:=TComicProject.Create; Project.Initialize('出力確認 fixture','1'); Probe.AdoptProject(Project,False);
+      Project:=CreateFixtureProject; Project.Initialize('出力確認 fixture','1'); Probe.AdoptProject(Project,False);
       ImageID:=Project.ImportImage(TPath.Combine(TestFolder,'reference.bmp'),'').ID; Project.Pages.Add(TComicPage.Create);
       AddPanel(0,ImageID,TRectF.Create(100,100,400,400)); AddPanel(0,ImageID,TRectF.Create(450,100,750,400));
       AddPanel(0,'',TRectF.Create(800,100,1100,400)); AddPanel(1,'missing-asset',TRectF.Create(100,100,400,400));

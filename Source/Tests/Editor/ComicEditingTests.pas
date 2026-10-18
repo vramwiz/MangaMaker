@@ -97,7 +97,8 @@ procedure TComicEditingTestsHelper.EditingChecks;
     FBalloonIndex:=0; FTool:=5; EditBalloonText(nil);
     Check(FTool=5,'double click cannot interrupt balloon creation');
     FTool:=0; EditBalloonText(nil);
-    Check((ActiveControl=FText) and (FText.Text=Page.Balloons[0].Text),'double click reopens selected balloon text');
+    Check(InlineTextActive and (FInlineText.Text=Page.Balloons[0].Text),'double click reopens selected balloon text on the canvas');
+    FinishInlineText(False); FTool:=0;
     X:=FPageRect.Left+Round((Original.Left+Original.Right)/2*FScale);
     Y:=FPageRect.Top+Round((Original.Top+Original.Bottom)/2*FScale);
     FCanvas.Perform(WM_LBUTTONDOWN,MK_LBUTTON,MakeLParam(X,Y));
@@ -105,8 +106,9 @@ procedure TComicEditingTestsHelper.EditingChecks;
     FCanvas.Perform(WM_LBUTTONUP,0,MakeLParam(X,Y));
     FCanvas.Perform(WM_LBUTTONDBLCLK,MK_LBUTTON,MakeLParam(X,Y));
     FCanvas.Perform(WM_LBUTTONUP,0,MakeLParam(X,Y));
-    Check((ActiveControl=FText) and not FDragging and (FText.ImeMode=imOpen),
-      'real VCL double-click then ssDouble MouseDown preserves balloon editor focus');
+    Check(InlineTextActive and not FDragging and (FInlineText.Input.ImeMode=imOpen),
+      'real VCL double-click then ssDouble MouseDown preserves inline input session');
+    FinishInlineText(False);
     ActiveControl:=FText; KeyValue:=VK_ESCAPE; Key(Self,KeyValue,[]);
     Check(KeyValue=VK_ESCAPE,'IME editor keeps its own Esc handling'); ActiveControl:=nil;
     FTabs.ActivePageIndex:=0; TabChanged(nil);
@@ -130,9 +132,9 @@ procedure TComicEditingTestsHelper.CreatedPanelSelectionChecks;
       Probe.FCanvas.Perform(WM_LBUTTONDOWN,Flags,MakeLParam(X,Y)); Probe.FCanvas.Perform(WM_LBUTTONUP,0,MakeLParam(X,Y));
     end;
   begin
-    Probe:=TComicTestForm.Create(nil);
+    Probe:=TComicTestForm.Create(nil); Probe.FDragPlacementMenu.Checked:=False;
     try
-      Project:=TComicProject.Create; Project.Initialize('新規コマ選択 fixture','1'); Probe.AdoptProject(Project,False);
+      Project:=CreateFixtureProject; Project.Initialize('新規コマ選択 fixture','1'); Probe.AdoptProject(Project,False);
       Project.ImportImage(TPath.Combine(TestFolder,'reference.bmp'),'');
       Panel:=TComicPanel.Create; Panel.Bounds:=TRectF.Create(100,100,300,300); AID:=Panel.ID; Probe.Page.Panels.Add(Panel);
       Panel:=TComicPanel.Create; Panel.Bounds:=TRectF.Create(400,100,600,300); BID:=Panel.ID; Probe.Page.Panels.Add(Panel);
@@ -158,7 +160,7 @@ procedure TComicEditingTestsHelper.CreatedPanelSelectionChecks;
         Check((Probe.Page.Panels.Count=2) and (Probe.Page.Panels[0].ID=AID) and (Probe.Page.Panels[1].ID=BID),
           'delete after creation cannot remove a stale previous group '+IntToStr(Kind));
         Probe.Undo(nil); Check(Project.Snapshot=Before,'undo restores only the correctly deleted new selection '+IntToStr(Kind));
-        Project.Save; Reloaded:=TComicProject.Create;
+        Project.Save; Reloaded:=CreateFixtureProject;
         try Reloaded.Load(TPath.Combine(Project.Folder,'Project.json')); Check(Reloaded.Snapshot=Before,'creation selection regression saves and reloads '+IntToStr(Kind));
         finally Reloaded.Free; end;
       end;
@@ -196,7 +198,7 @@ procedure TComicEditingTestsHelper.PanelGroupChecks;
   begin
     Probe:=TComicTestForm.Create(nil); PNG:=TPngImage.Create;
     try
-      Project:=TComicProject.Create; Project.Initialize('複数コマ fixture','1'); Probe.AdoptProject(Project,False);
+      Project:=CreateFixtureProject; Project.Initialize('複数コマ fixture','1'); Probe.AdoptProject(Project,False);
       ImageID:=Project.ImportImage(TPath.Combine(TestFolder,'reference.bmp'),'').ID;
       Panel:=TComicPanel.Create; Panel.Bounds:=TRectF.Create(100,100,500,500); Panel.ImageID:=ImageID; Panel.PanX:=20; Panel.PanY:=10;
       FirstID:=Panel.ID; Probe.Page.Panels.Add(Panel);
@@ -240,7 +242,7 @@ procedure TComicEditingTestsHelper.PanelGroupChecks;
         (Abs(Probe.Page.Panels[0].PanX-28)<0.001) and (Abs(Probe.Page.Panels[0].PanY-8)<0.001),
         'group proportions scale panel sizes spacing and relative image pan independently');
       Check((Items[0].Bounds.Width=400) and (Items[1].Vertices[0].X=650),'group source transforms own stable original geometry for repeated drag updates');
-      Project.Save; Reloaded:=TComicProject.Create;
+      Project.Save; Reloaded:=CreateFixtureProject;
       try Reloaded.Load(TPath.Combine(Project.Folder,'Project.json')); Check(Reloaded.Snapshot=Project.Snapshot,'mixed-shape group transforms survive save and reload');
       finally Reloaded.Free; end;
       Project.Restore(Before); Probe.RefreshUI; SelectPair;
@@ -295,7 +297,7 @@ procedure TComicEditingTestsHelper.DragCommandChecks;
   begin
     Original:=FProject.Snapshot; Probe:=TComicTestForm.Create(nil);
     try
-      Project:=TComicProject.Create; Project.Initialize('ドラッグ中コマンド fixture','1'); Probe.AdoptProject(Project,False);
+      Project:=CreateFixtureProject; Project.Initialize('ドラッグ中コマンド fixture','1'); Probe.AdoptProject(Project,False);
       Panel:=TComicPanel.Create; Panel.Bounds:=TRectF.Create(100,100,550,1200); Panel.ImageID:=Project.ImportImage(TPath.Combine(TestFolder,'reference.bmp'),'').ID; Probe.Page.Panels.Add(Panel);
       Panel:=TComicPanel.Create; Panel.Bounds:=TRectF.Create(650,100,1100,1200); Probe.Page.Panels.Add(Panel); Project.Pages.Add(TComicPage.Create);
       Probe.ApplyEffectMaterial(0,Probe.FEffectMaterials[0]); Base:=Project.Snapshot;

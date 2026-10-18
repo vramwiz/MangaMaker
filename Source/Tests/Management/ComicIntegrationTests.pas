@@ -85,7 +85,7 @@ procedure TComicIntegrationTestsHelper.BridgeChecks;
     Original:=FProject.Snapshot; LibraryPath:=TPath.Combine(DataRoot,'Characters\Library.json'); LibraryBytes:=TFile.ReadAllText(LibraryPath,TEncoding.UTF8);
     Probe:=TComicTestForm.Create(nil); Bridge:=nil; Request:=nil; Reply:=nil; Manager:=nil; PNG:=TPngImage.Create;
     try
-      Project:=TComicProject.Create; Project.Initialize('パイプ fixture','1'); Project.GenerationInstructions:='作品の指示'+#13#10+'第2行'; Probe.AdoptProject(Project,False);
+      Project:=CreateFixtureProject; Project.Initialize('パイプ fixture','1'); Project.GenerationInstructions:='作品の指示'+#13#10+'第2行'; Probe.AdoptProject(Project,False);
       Bridge:=TComicBridge.Create(TPath.Combine(TestFolder,'Runtime'),Probe.BridgeRequest); Manifest:=Bridge.ManifestPath;
       Check(FileExists(Manifest) and (Pos(Bridge.PipeName,TFile.ReadAllText(Manifest,TEncoding.UTF8))>0),'local pipe publishes a unique process manifest');
       Request:=NewRequest('status',''); Request.AddPair('requestId','照会-1'); Run; Good('live pipe answers UTF-8 status');
@@ -178,7 +178,7 @@ procedure TComicIntegrationTestsHelper.BridgeChecks;
       After:=Project.Snapshot; NewFile:=Project.Asset(ImageID).FileName;
       Check((Probe.FUndo.Count=History+1) and (Project.Asset(ImageID).FileName<>'') and FileExists(Project.ImagePath(ImageID)),
         'project image registration commits one undo operation');
-      Reloaded:=TComicProject.Create;
+      Reloaded:=CreateFixtureProject;
       try Reloaded.Load(TPath.Combine(Project.Folder,'Draft.json')); Check(Reloaded.Snapshot=After,'registered image and project generation snapshot persist in recoverable draft');
       finally Reloaded.Free; end;
       Probe.Undo(nil); Check(Project.Snapshot=Before,'pipe image registration undo restores previous reference');
@@ -217,7 +217,7 @@ procedure TComicIntegrationTestsHelper.GenerationPresetChecks;
     Original:=FProject.Snapshot; Probe:=TComicTestForm.Create(nil); Presets:=TObjectList<TComicGenerationPreset>.Create; CopyPresets:=TObjectList<TComicGenerationPreset>.Create;
     Broken:=TObjectList<TComicGenerationPreset>.Create; PNG:=TPngImage.Create;
     try
-      Project:=TComicProject.Create; Project.Initialize('生成指示 fixture','1'); Probe.AdoptProject(Project,False);
+      Project:=CreateFixtureProject; Project.Initialize('生成指示 fixture','1'); Probe.AdoptProject(Project,False);
       Preset:=TComicGenerationPreset.Create; Preset.Name:='漫画の共通指示'; Preset.Instructions:='人物の同一性を保つ。'+#13#10+'背景の位置関係を維持する。';
       ID:=Preset.ID; Instructions:=Preset.Instructions; Presets.Add(Preset);
       Preset:=TComicGenerationPreset.Create; Preset.Name:='別の指示'; Preset.Instructions:='追加の指示'; Presets.Add(Preset);
@@ -236,7 +236,7 @@ procedure TComicIntegrationTestsHelper.GenerationPresetChecks;
         'deleting a common generation preset preserves project instructions');
       Probe.Undo(nil); Check((Project.GenerationPresetID='') and (Project.GenerationInstructions=''),'generation preset apply undoes as one project operation');
       Probe.Redo(nil); Check(Project.GenerationInstructions=Instructions,'generation preset redo restores its exact snapshot');
-      Project.Save; Reloaded:=TComicProject.Create;
+      Project.Save; Reloaded:=CreateFixtureProject;
       try Reloaded.Load(TPath.Combine(Project.Folder,'Project.json')); Check(Reloaded.GenerationInstructions=Instructions,'project generation snapshot survives save and reload');
       finally Reloaded.Free; end;
       Before:=TFile.ReadAllText(Path,TEncoding.UTF8); Lock:=CreateFile(PChar(Path),GENERIC_READ,FILE_SHARE_READ,nil,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,0);

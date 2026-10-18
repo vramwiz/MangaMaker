@@ -30,20 +30,20 @@ procedure TComicLibrariesTestsHelper.PageBasisChecks;
     Probe:=TComicTestForm.Create(nil); Presets:=TObjectList<TComicPagePreset>.Create;
     CopyPresets:=TObjectList<TComicPagePreset>.Create; PNG:=TPngImage.Create;
     try
-      Project:=TComicProject.Create; Project.Initialize('ページ基準 fixture','1'); Probe.AdoptProject(Project,False);
-      Preset:=TComicPagePreset.Create; try OriginalBasis:=Preset.Basis; finally Preset.Free; end;
-      Check(Project.PageBasis.Same(OriginalBasis),'new projects use the standard shared page basis');
+      Project:=CreateFixtureProject; Project.Initialize('ページ基準 fixture','1'); Probe.AdoptProject(Project,False);
+      OriginalBasis:=Project.PageBasis;
+      Check((OriginalBasis.Width=1200) and (OriginalBasis.Height=1700),'legacy page geometry fixture uses its explicit canvas dimensions');
       Project.Pages.Add(TComicPage.Create);
       P:=TComicPanel.Create; P.Bounds:=TRectF.Create(100,100,1100,1500); P.ImageID:=Project.ImportImage(TPath.Combine(TestFolder,'reference.bmp'),'').ID;
       Project.Pages[0].Panels.Add(P); Bounds:=P.Bounds;
       Check(ExportSequence(Project,Probe.FRenderer,False)=2,'page-basis fixture exports both initial pages');
       Basis:=OriginalBasis; Basis.Width:=600; Basis.Height:=850; Basis.Left:=32; Basis.Top:=40; Basis.Right:=44; Basis.Bottom:=48;
       Probe.ApplyPageBasis(Basis);
-      Check(Project.PageBasis.Same(Basis) and (Project.Pages[0].Panels[0].Bounds=Bounds) and (Project.Pages.Count=2),
-        'page basis applies to all pages while retaining existing object coordinates');
+      Check(Project.PageBasis.Same(Basis) and (Project.Pages[0].Panels[0].Bounds=TRectF.Create(50,50,550,750)) and (Project.Pages.Count=2),
+        'page basis scales objects on every page uniformly around the page center');
       Snap:=Probe.SnapCreationPoint(TPointF.Create(33,41));
       Check((Snap.X=32) and (Snap.Y=40),'creation snaps to the configured shared page frame');
-      Project.Save; Reloaded:=TComicProject.Create;
+      Project.Save; Reloaded:=CreateFixtureProject;
       try Reloaded.Load(TPath.Combine(Project.Folder,'Project.json'));
         Check(Reloaded.PageBasis.Same(Basis),'page resolution and all four margins survive save and reload');
       finally Reloaded.Free; end;
@@ -72,26 +72,26 @@ procedure TComicLibrariesTestsHelper.PageBasisChecks;
         LoadPagePresets(CopyPresets,Path);
         Check((CopyPresets.Count=1) and (CopyPresets[0].ID=ID) and CopyPresets[0].Basis.Same(Basis),
           'common page preset saves and reloads its identity dimensions and margins');
-        Dialog.RenamePreset(1,'更新したページ基準'); Name:=Presets[1].Name;
-        Check((Presets[1].ID=ID) and (Name='更新したページ基準'),'renaming a page preset preserves its identity');
+        Dialog.RenamePreset(BuiltInPagePresetCount,'更新したページ基準'); Name:=Presets[BuiltInPagePresetCount].Name;
+        Check((Presets[BuiltInPagePresetCount].ID=ID) and (Name='更新したページ基準'),'renaming a page preset preserves its identity');
         Lock:=CreateFile(PChar(Path),GENERIC_READ,FILE_SHARE_READ,nil,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,0);
         Check(Lock<>INVALID_HANDLE_VALUE,'page-preset library can be locked to inject publication failure');
         Before:=TFile.ReadAllText(Path,TEncoding.UTF8);
         try
-          Failed:=False; try Dialog.RenamePreset(1,'失敗する名前'); except Failed:=True; end;
-          Check(Failed and (Presets[1].Name=Name) and (TFile.ReadAllText(Path,TEncoding.UTF8)=Before),
+          Failed:=False; try Dialog.RenamePreset(BuiltInPagePresetCount,'失敗する名前'); except Failed:=True; end;
+          Check(Failed and (Presets[BuiltInPagePresetCount].Name=Name) and (TFile.ReadAllText(Path,TEncoding.UTF8)=Before),
             'failed page-preset rename restores memory and retains original library bytes');
           Failed:=False; try Dialog.RegisterPreset('失敗する追加'); except Failed:=True; end;
-          Check(Failed and (Presets.Count=2) and (TFile.ReadAllText(Path,TEncoding.UTF8)=Before),
+          Check(Failed and (Presets.Count=BuiltInPagePresetCount+1) and (TFile.ReadAllText(Path,TEncoding.UTF8)=Before),
             'failed page-preset registration cannot publish a partial item');
-          Failed:=False; try Dialog.RemovePreset(1); except Failed:=True; end;
-          Check(Failed and (Presets.Count=2) and (Presets[1].ID=ID),
+          Failed:=False; try Dialog.RemovePreset(BuiltInPagePresetCount); except Failed:=True; end;
+          Check(Failed and (Presets.Count=BuiltInPagePresetCount+1) and (Presets[BuiltInPagePresetCount].ID=ID),
             'failed page-preset deletion restores the exact item and order');
         finally CloseHandle(Lock); end;
-        Dialog.RemovePreset(1);
-        Check((Presets.Count=1) and Project.PageBasis.Same(Basis),'deleting a common preset keeps the applied project snapshot');
+        Dialog.RemovePreset(BuiltInPagePresetCount);
+        Check((Presets.Count=BuiltInPagePresetCount) and Project.PageBasis.Same(Basis),'deleting a common preset keeps the applied project snapshot');
         Failed:=False; try Dialog.RemovePreset(0); except Failed:=True; end;
-        Check(Failed and (Presets.Count=1),'built-in page basis remains available after deletion attempts');
+        Check(Failed and (Presets.Count=BuiltInPagePresetCount),'built-in page basis remains available after deletion attempts');
         Dialog.SetDraftBasis(Basis); KeyValue:=VK_RETURN; Dialog.KeyDown(KeyValue,[]);
         Check((Dialog.ModalResult=mrOK) and Dialog.ResultBasis.Same(Basis),'valid page settings commit the complete basis');
         for PPI in [96,144] do begin
@@ -107,7 +107,7 @@ procedure TComicLibrariesTestsHelper.PageBasisChecks;
       J:=CopyPresets[0].Json;
       try Before:='{"version":1,"presets":['+J.ToJSON+',42]}'; finally J.Free; end;
       AtomicWrite(Path,Before); Failed:=False; try LoadPagePresets(Presets,Path); except Failed:=True; end;
-      Check(Failed and (Presets.Count=1) and (TFile.ReadAllText(Path,TEncoding.UTF8)=Before),
+      Check(Failed and (Presets.Count=BuiltInPagePresetCount) and (TFile.ReadAllText(Path,TEncoding.UTF8)=Before),
         'malformed page-preset library cannot publish a valid prefix or alter the file');
       Dialog:=TComicPageDialog.CreateSettings(Self,Basis,Presets,Path,False);
       try
@@ -123,11 +123,11 @@ procedure RunPageBasisChecks(Host: TComicTestForm);
 begin Host.PageBasisChecks; end;
 procedure TComicLibrariesTestsHelper.LayoutManagementChecks;
   var TemplateList,CopyLibrary: TObjectList<TComicLayout>; Layout: TComicLayout; Applied: TComicProject;
-    Path,ID,Before,ProjectBefore,TemplateJson: string; Bounds: TRectF; Lock: THandle; Failed,Writable: Boolean;
+    Path,ID,Before,ProjectBefore,TemplateJson,LibraryBefore: string; Bounds: TRectF; Lock: THandle; Failed,Writable: Boolean;
     Button: TComicIconButton; Index: Integer; J: TJSONObject;
   begin
     TemplateList:=TObjectList<TComicLayout>.Create; CopyLibrary:=TObjectList<TComicLayout>.Create;
-    Applied:=TComicProject.Create; ProjectBefore:=FProject.Snapshot;
+    Applied:=CreateFixtureProject; ProjectBefore:=FProject.Snapshot;
     try
       SeedLayouts(TemplateList); Layout:=TComicLayout.Create; Layout.Name:='管理テスト'; Layout.Capture(FProject,Page);
       TemplateList.Add(Layout); ID:=Layout.ID; Bounds:=Layout.Panels[0].Bounds; Path:=TPath.Combine(TestFolder,'managed-layouts.json');
@@ -136,7 +136,7 @@ procedure TComicLibrariesTestsHelper.LayoutManagementChecks;
       Check((Layout.ID=ID) and (Layout.Name='日本語に名前変更') and (Layout.Panels[0].Bounds=Bounds),
         'template rename preserves identity and captured geometry');
       SeedLayouts(CopyLibrary); LoadLayouts(CopyLibrary,Path);
-      Check((CopyLibrary.Count=6) and (CopyLibrary.Last.ID=ID) and (CopyLibrary.Last.Name=Layout.Name),
+      Check((CopyLibrary.Count=BuiltInLayoutCount+1) and (CopyLibrary.Last.ID=ID) and (CopyLibrary.Last.Name=Layout.Name),
         'renamed template reloads with its stable identity');
       Before:=TFile.ReadAllText(Path,TEncoding.UTF8); Failed:=False;
       try RenameLayout(TemplateList,TemplateList[0],'変更禁止',Path); except Failed:=True; end;
@@ -152,17 +152,21 @@ procedure TComicLibrariesTestsHelper.LayoutManagementChecks;
         Check(Failed and (Layout.Name='日本語に名前変更') and (TFile.ReadAllText(Path,TEncoding.UTF8)=Before),
           'failed template rename restores memory and retains the original library');
         Failed:=False; try RemoveLayout(TemplateList,Layout,Path); except Failed:=True; end;
-        Check(Failed and (TemplateList.Count=6) and (TemplateList[5]=Layout) and (TemplateList[5].ID=ID),
+        Check(Failed and (TemplateList.Count=BuiltInLayoutCount+1) and (TemplateList[BuiltInLayoutCount]=Layout) and (TemplateList[BuiltInLayoutCount].ID=ID),
           'failed template deletion restores the exact item and list order');
       finally CloseHandle(Lock); end;
       J:=Layout.Json; try TemplateJson:=J.ToJSON; finally J.Free; end;
       Before:=Applied.Snapshot; RemoveLayout(TemplateList,Layout,Path);
-      Check((TemplateList.Count=5) and (Applied.Snapshot=Before),'deleting a common template retains previously applied page contents');
+      Check((TemplateList.Count=BuiltInLayoutCount) and (Applied.Snapshot=Before),'deleting a common template retains previously applied page contents');
+      // 更新後も登録分だけを読み込み、削除した自作テンプレートを標準追加で復活させない。
+      CopyLibrary.Clear; SeedLayouts(CopyLibrary); LibraryBefore:=TFile.ReadAllText(Path,TEncoding.UTF8); LoadLayouts(CopyLibrary,Path);
+      Check((CopyLibrary.Count=BuiltInLayoutCount) and (TFile.ReadAllText(Path,TEncoding.UTF8)=LibraryBefore),
+        'new standard layouts coexist with existing libraries without rewriting or reviving deleted custom templates');
       Failed:=False; try RemoveLayout(TemplateList,TemplateList[0],Path); except Failed:=True; end;
-      Check(Failed and (TemplateList.Count=5),'built-in templates remain available after deletion attempts');
+      Check(Failed and (TemplateList.Count=BuiltInLayoutCount),'built-in templates remain available after deletion attempts');
       Before:='{"version":2,"layouts":['+TemplateJson+',42]}'; AtomicWrite(Path,Before);
       Failed:=False; try LoadLayouts(TemplateList,Path); except Failed:=True; end;
-      Check(Failed and (TemplateList.Count=5) and (TFile.ReadAllText(Path,TEncoding.UTF8)=Before),
+      Check(Failed and (TemplateList.Count=BuiltInLayoutCount) and (TFile.ReadAllText(Path,TEncoding.UTF8)=Before),
         'invalid trailing template item cannot publish a valid prefix or overwrite the library');
       Layout:=TComicLayout.Create; Layout.Name:='UI管理 fixture'; Layout.Capture(FProject,Page); FLayouts.Add(Layout);
       Index:=FLayouts.Count-1; RefreshLayouts(Index);
@@ -198,7 +202,7 @@ procedure TComicLibrariesTestsHelper.RecentProjectChecks;
       Failed:=False; try CopyRecent.Load(Path); except Failed:=True; end;
       Check(Failed and (CopyRecent.Items.Count=20) and (CopyRecent.Items[0].Title='再度開く'),'malformed recent file cannot publish a prefix or replace existing history');
       AtomicWrite(Path,Before); Recent.Clear(Path); CopyRecent.Load(Path); Check(CopyRecent.Items.Count=0,'explicit history clear saves an empty list');
-      Project:=TComicProject.Create; Project.Initialize('履歴から開く','第1話'); SourceFile:=TPath.Combine(Project.Folder,'Project.json');
+      Project:=CreateFixtureProject; Project.Initialize('履歴から開く','第1話'); SourceFile:=TPath.Combine(Project.Folder,'Project.json');
       Saved:=Project.Snapshot; Project.Title:='未保存の作業を復元'; Project.SaveDraft; Draft:=Project.Snapshot; Project.Free;
       Probe.OpenProjectFile(SourceFile,0); Check((Probe.FProject.Snapshot=Saved) and not Probe.FDirty,'history open can keep the formally saved project');
       Check((Probe.FRecent.Items.Count>0) and (Probe.FRecent.Items[0].FileName=SourceFile),'successful open records the original Project.json path');

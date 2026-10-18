@@ -14,7 +14,7 @@ uses Winapi.Windows, Winapi.Messages, Winapi.ShellAPI, Winapi.Imm,
   Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.ComCtrls, Vcl.Menus,
   Vcl.Dialogs, Vcl.Graphics, Vcl.Imaging.pngimage, ComicModel,
   ComicLayouts, ComicExport, ComicEditing, ComicIconButton,
-  ComicGeometry, ComicGapSnap;
+  ComicDragIntent, ComicGeometry, ComicGapSnap;
 type
   TComicGeometryTestsHelper = class helper for TComicTestForm
     procedure GeometryChecks;
@@ -53,7 +53,7 @@ procedure TComicGeometryTestsHelper.GeometryChecks;
     end;
     procedure RoundTrip(const Message: string);
     begin
-      FProject.Save; Reloaded:=TComicProject.Create;
+      FProject.Save; Reloaded:=CreateFixtureProject;
       try Reloaded.Load(TPath.Combine(FProject.Folder,'Project.json'));
         Check(Reloaded.Snapshot=FProject.Snapshot,Message);
       finally Reloaded.Free; end;
@@ -121,7 +121,7 @@ procedure TComicGeometryTestsHelper.GeometryChecks;
   begin
     OriginalProject:=FProject; OriginalUndo:=FUndo; OriginalRedo:=FRedo;
     Model:=OriginalProject.Snapshot; OldIndex:=FPageIndex; OldSnap:=FSnap.Checked;
-    FProject:=TComicProject.Create; FUndo:=TList<string>.Create; FRedo:=TList<string>.Create;
+    FProject:=CreateFixtureProject; FUndo:=TList<string>.Create; FRedo:=TList<string>.Create;
     PNG:=TPngImage.Create; Reference:=TBitmap.Create;
     try
       FProject.Initialize('Geometry fixture','1'); FPageIndex:=0; FPanelIndex:=-1; FBalloonIndex:=-1;
@@ -180,7 +180,7 @@ procedure TComicGeometryTestsHelper.GeometryChecks;
       KeyValue:=VK_ESCAPE; ActiveControl:=FView; Key(Self,KeyValue,[]);
       Check(FGeometryPoints.Count=0,'Esc cancels pending polygon points');
       FSnap.Checked:=False;
-      Layout:=TComicLayout.Create; LayoutCopy:=TComicLayout.Create; Reloaded:=TComicProject.Create;
+      Layout:=TComicLayout.Create; LayoutCopy:=TComicLayout.Create; Reloaded:=CreateFixtureProject;
       try
         Layout.Name:='Polygon fixture'; Layout.Capture(FProject,Page);
         J:=Layout.Json; try LayoutCopy.Read(J); finally J.Free; end;
@@ -368,9 +368,9 @@ procedure TComicGeometryTestsHelper.GapSnapChecks;
     procedure Click(PX,PY: Single; Shift: TShiftState);
     begin X:=Probe.FPageRect.Left+Round(PX*Probe.FScale); Y:=Probe.FPageRect.Top+Round(PY*Probe.FScale); Probe.MouseDown(Probe.FCanvas,mbLeft,Shift,X,Y); Probe.MouseUp(Probe.FCanvas,mbLeft,Shift,X,Y); end;
   begin
-    Original:=FProject.Snapshot; Probe:=TComicTestForm.Create(nil);
+    Original:=FProject.Snapshot; Probe:=TComicTestForm.Create(nil); Probe.FDragPlacementMenu.Checked:=False;
     try
-      Project:=TComicProject.Create; Project.Initialize('間隔スナップ fixture','1'); Probe.AdoptProject(Project,False); Project.ImportImage(TPath.Combine(TestFolder,'reference.bmp'),'');
+      Project:=CreateFixtureProject; Project.Initialize('間隔スナップ fixture','1'); Probe.AdoptProject(Project,False); Project.ImportImage(TPath.Combine(TestFolder,'reference.bmp'),'');
       Add(100,100,300,350); Add(320,100,520,350); Add(100,380,300,630);
       Snap:=FindGapSnap(Probe.Page.Panels,TPointF.Create(538,200),6,''); Check(Snap.HasX and (Snap.Point.X=540) and not Snap.HasY,'horizontal gap repeats nearest-neighbour spacing');
       Snap:=FindGapSnap(Probe.Page.Panels,TPointF.Create(200,662),6,''); Check(Snap.HasY and (Snap.Point.Y=660) and not Snap.HasX,'vertical gap repeats nearest-neighbour spacing');
@@ -383,7 +383,7 @@ procedure TComicGeometryTestsHelper.GapSnapChecks;
         PointA:=Probe.SnapCreationPoint(TPointF.Create(538,200)); Check((PointA.X=540) and (Abs(PointA.Y-200)<0.001),'gap closer than an edge remains reachable at PPI '+IntToStr(PPI));
         Before:=Project.Snapshot; Probe.FTool:=1; Click(538,180,[]); Click(820,330,[]);
         Check((Probe.Page.Panels.Count=4) and (Abs(Probe.Page.Panels[3].Bounds.Left-540)<0.001),'rectangle creation uses repeated gap at PPI '+IntToStr(PPI));
-        Project.Save; Reloaded:=TComicProject.Create;
+        Project.Save; Reloaded:=CreateFixtureProject;
         try Reloaded.Load(TPath.Combine(Project.Folder,'Project.json')); Check(Reloaded.Snapshot=Project.Snapshot,'gap-created panel saves and reloads '+IntToStr(PPI)); finally Reloaded.Free; end;
         Probe.Undo(nil); Check(Project.Snapshot=Before,'gap-created panel undo restores exact source spacing '+IntToStr(PPI));
         Probe.FSnap.Checked:=False; PointA:=Probe.SnapCreationPoint(TPointF.Create(538,200)); Check(PointA.X=538,'gap setting disables all snapping '+IntToStr(PPI)); Probe.FSnap.Checked:=True;
@@ -464,7 +464,7 @@ procedure TComicGeometryTestsHelper.PanelTransformSnapChecks;
       Panels.Clear; Add(100,100,300,300); Panel.SetVertices([TPointF.Create(100,100),TPointF.Create(220,100),TPointF.Create(300,300)]);
       Bounds:=TRectF.Create(222,600,422,800); Target:=SnapPanelBounds(Panels,Bounds,Frame,8,0,nil,30,30);
       Check(Target.Left=220,'polygon corner axes remain available to whole-panel movement');
-      Project:=TComicProject.Create; Project.Initialize('コマ全体スナップ fixture','1'); Probe.AdoptProject(Project,False);
+      Project:=CreateFixtureProject; Project.Initialize('コマ全体スナップ fixture','1'); Probe.AdoptProject(Project,False);
       ImageID:=Project.ImportImage(TPath.Combine(TestFolder,'reference.bmp'),'').ID;
       Panels.Free; Panels:=nil;
       Panel:=TComicPanel.Create; Panel.Bounds:=TRectF.Create(100,100,300,350); Probe.Page.Panels.Add(Panel);
@@ -479,7 +479,7 @@ procedure TComicGeometryTestsHelper.PanelTransformSnapChecks;
         Check((Probe.Page.Panels[2].Bounds.Left=540) and (Probe.Page.Panels[2].Bounds.Width=200) and
           (Probe.Page.Panels[2].ID=MovingID) and (Probe.Page.Panels[2].ImageID=ImageID) and (Probe.FUndo.Count=History+1),
           'VCL panel movement snaps to repeated gap and commits once at PPI '+IntToStr(PPI));
-        After:=Project.Snapshot; Project.Save; Reloaded:=TComicProject.Create;
+        After:=Project.Snapshot; Project.Save; Reloaded:=CreateFixtureProject;
         try Reloaded.Load(TPath.Combine(Project.Folder,'Project.json')); Check(Reloaded.Snapshot=After,'snapped panel saves and reloads at PPI '+IntToStr(PPI)); finally Reloaded.Free; end;
         Probe.Undo(nil); Check(Project.Snapshot=Before,'snapped movement undo restores exact source data '+IntToStr(PPI));
         Probe.Redo(nil); Check(Project.Snapshot=After,'snapped movement redo restores all geometry '+IntToStr(PPI)); Probe.Undo(nil);
@@ -549,10 +549,11 @@ procedure TComicGeometryTestsHelper.PanelTransformSnapChecks;
         Bounds:=Probe.SelectedPanelBounds; PointA:=EditHandles(Bounds)[4]; X:=Probe.FPageRect.Left+Round(PointA.X*Probe.FScale); Y:=Probe.FPageRect.Top+Round(PointA.Y*Probe.FScale);
         Probe.FCanvas.Perform(WM_LBUTTONDOWN,MK_LBUTTON,MakeLParam(X,Y)); MoveTo(TPointF.Create(1138,1638)); KeyValue:=VK_ESCAPE; Probe.Key(Probe,KeyValue,[]);
         Check((Project.Snapshot=Before) and (Probe.FUndo.Count=0) and not Probe.FDragging,'escape cancels an entire snapped group resize '+IntToStr(PPI));
-        // 短い移動でも選択中のコマ自身が吸着先となり、元位置へ引き戻さないことを確認する。
+        // 長押し後の小移動でも、選択コマ自身へ吸着して元位置へ引き戻さないことを確認する。
         Probe.FSelectedPanels.Clear; Probe.FSelectedPanels.Add(Probe.Page.Panels[0].ID); Probe.FSelectedPanels.Add(Probe.Page.Panels[1].ID); Probe.FPanelIndex:=0; PaintProbe;
         Bounds:=Probe.SelectedPanelBounds; PointA:=Bounds.CenterPoint; X:=Probe.FPageRect.Left+Round(PointA.X*Probe.FScale); Y:=Probe.FPageRect.Top+Round(PointA.Y*Probe.FScale);
-        Probe.FCanvas.Perform(WM_LBUTTONDOWN,MK_LBUTTON,MakeLParam(X,Y)); MoveTo(TPointF.Create(PointA.X+5,PointA.Y));
+        Probe.FCanvas.Perform(WM_LBUTTONDOWN,MK_LBUTTON,MakeLParam(X,Y));
+        Probe.FDragStartedTick:=GetTickCount64-ComicMoveHoldMilliseconds; MoveTo(TPointF.Create(PointA.X+5,PointA.Y));
         Check(Probe.SelectedPanelBounds.Left>101,Format('short group movement does not stick to a selected member %d [drag=%s pan=%s group=%d handle=%d scale=%.6f left=%.3f start=%.3f last=%.3f]',[PPI,BoolToStr(Probe.FDragging,True),BoolToStr(Probe.FViewPanning,True),Length(Probe.FDragGroup),Probe.FDragHandle,Probe.FScale,Probe.SelectedPanelBounds.Left,Probe.FStart.X,Probe.FLast.X])); Probe.CancelDrag;
         for K:=0 to 1 do begin
           Probe.FSelectedPanels.Clear; Probe.FSelectedPanels.Add(Probe.Page.Panels[0].ID); Probe.FSelectedPanels.Add(Probe.Page.Panels[1].ID); Probe.FPanelIndex:=0; PaintProbe;

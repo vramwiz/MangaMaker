@@ -12,6 +12,8 @@ type
     Bounds: TRectF;
     Vertices: TArray<TPointF>;
     PanX,PanY: Double;
+    Zoom: Double;
+    ImageBounds: TRectF;
   end;
 
 function CapturePanelTransforms(Page: TComicPage; const IDs: TArray<string>): TArray<TComicPanelTransform>;
@@ -32,7 +34,8 @@ begin
   try
     for Panel in Page.Panels do for ID in IDs do if Panel.ID=ID then begin
       Item.ID:=Panel.ID; Item.Bounds:=Panel.Bounds; Item.Vertices:=Copy(Panel.Vertices,0,Length(Panel.Vertices));
-      Item.PanX:=Panel.PanX; Item.PanY:=Panel.PanY; List.Add(Item); Break;
+      Item.PanX:=Panel.PanX; Item.PanY:=Panel.PanY; Item.Zoom:=Panel.Zoom;
+      Item.ImageBounds:=TRectF.Empty; List.Add(Item); Break;
     end;
     Result:=List.ToArray;
   finally List.Free; end;

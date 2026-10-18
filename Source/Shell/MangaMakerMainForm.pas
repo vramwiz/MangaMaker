@@ -10,11 +10,11 @@ uses Winapi.Windows, Winapi.Messages, Winapi.ShellAPI, Winapi.Imm,
   System.Hash, System.DateUtils, Vcl.Controls, Vcl.Forms,
   Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.ComCtrls, Vcl.Menus,
   Vcl.Dialogs, Vcl.Graphics, Vcl.Imaging.pngimage, ComicModel,
-  ComicRender, ComicAssetDialog, ComicLayouts, ComicExport,
-  ComicEditing, ComicIconButton, ComicTextInput, ComicPagePresets,
+  ComicRender, ComicPlacementPreview, ComicAssetDialog, ComicLayouts, ComicExport,
+  ComicEditing, ComicImageSnap, ComicDialogueTransform, ComicIconButton, ComicTextInput, ComicInlineText, ComicPagePresets,
   ComicPageDialog, ComicPanelTransform, ComicFontHistory, ComicGenerationPresets,
   ComicGenerationDialog, ComicBridge, ComicAssetEditing, ComicEffects,
-  ComicRecentProjects, ComicExportDialog, ComicProjectDialog, ComicCodexTransport, ComicEffectPane;
+  ComicRecentProjects, ComicExportDialog, ComicProjectDialog, ComicCodexTransport, ComicEffectPane, ComicProjectLists;
 
 type
   TComicPaintBox = class(TPaintBox)
@@ -44,6 +44,8 @@ type
     FAssetManager: TAssetDialog;
     FGenerationJobs: TObjectList<TComicGenerationJob>;
     FGenerationActive: TComicGenerationJob;
+    FScriptGenerationProject,FScriptGenerationSession: string;
+    FScriptGenerationCount,FScriptGenerationLimit: Integer;
     FGenerationTimer: TTimer;
     FGenerationTimeoutMS: Cardinal;
     FEffectMaterials: TObjectList<TComicEffectMaterial>;
@@ -68,7 +70,9 @@ type
     FCharacterLibraryWritable: Boolean;
     FRenderer: TComicRenderer;
     FUndo,FRedo: TList<string>;
-    FPages,FImages,FLayoutList: TListBox;
+    FPages: TComicPageList;
+    FImages: TComicImageList;
+    FLayoutList: TListBox;
     FLayouts: TObjectList<TComicLayout>;
     FPagePresets: TObjectList<TComicPagePreset>;
     FGenerationPresets: TObjectList<TComicGenerationPreset>;
@@ -81,6 +85,12 @@ type
     FTabs: TPageControl;
     FStatus: TStatusBar;
     FText: TMemo;
+    FInlineText: TComicInlineText;
+    FInlineProjectID,FInlinePageID: string;
+    FFinishingInline,FTextToolVertical,FInlineSelecting: Boolean;
+    FBalloonControlsLoading,FApplyingBalloonSettings: Boolean;
+    FLastFontFamily,FTextEditUndo: string;
+    FScriptLines: TComboBox;
     FVertical,FTransparent,FOverflow: TCheckBox;
     FFont: TComboBox;
     FImagePopup: TPopupMenu;
@@ -95,6 +105,7 @@ type
     FStart,FLast: TPointF;
     FDragBounds: TRectF;
     FDragMouse: TPoint;
+    FDragStartedTick: UInt64;
     FPageRect: TRect;
     FScale: Double;
     FViewZoom: Double;
@@ -106,18 +117,21 @@ type
     FDragHandle: Integer;
     FDragSnapshot: string;
     FDragMoved: Boolean;
+    FDialogueJustSelected: Boolean;
+    FDialogueSnap: TComicDialogueSnap;
+    FPlacementDragging: Boolean;
+    FDragPlacementMenu: TMenuItem;
     FTesting: Boolean;
     FIconButtons: TList<TComicIconButton>;
     FModeButtons: array[0..4] of TComicIconButton;
     FModeTitle: TLabel;
     FDragZoom: Double;
+    FDragEffectAngle: Double;
     FTailIndex,FDragTailHandle: Integer;
     FDragTailState: TComicTailState;
     FDragBalloonTransform: TComicBalloonTransform;
     FBorderWidth,FContour: TComboBox;
     FBorderColor,FFillColor: TColor;
-    FDragTextOffset: TPointF;
-    FDragFontSize: Integer;
     FGeometryPoints: TList<TPointF>;
     FSnap: TCheckBox;
     FSplitStage: Integer;
@@ -126,15 +140,17 @@ type
     FDragVertices: TArray<TPointF>;
     FDragVertex: Integer;
     FDragImageBounds: TRectF;
+    FImageSnap: TComicImageSnap;
     FSelectedPanels: TList<string>;
     FDragGroup: TArray<TComicPanelTransform>;
     function GenerationSnapshot(const LibraryName,ProjectID,AssetID: string; out References: TArray<string>): string;
     function GenerationTargetMatches(Job: TComicGenerationJob): Boolean;
     procedure GenerateAsset(Sender: TObject);
+    procedure GenerateScript(Sender: TObject);
     procedure CancelGeneration(Sender: TObject);
     procedure GenerationTick(Sender: TObject);
     procedure BridgeRequest(const Request: string; out Reply: string);
-    procedure FinishImageManagement(const Before: string);
+    procedure FinishImageManagement(const Before: string; AlreadyPersisted: Boolean=False);
     procedure EffectMaterials(Sender: TObject);
     procedure EffectLibraryChanged(Sender: TObject);
     procedure RefreshEffectMaterials;
@@ -179,6 +195,19 @@ type
     procedure UpdateIconState;
     procedure CancelDrag;
     procedure EditBalloonText(Sender: TObject);
+    procedure BalloonToolKey(var Key: Word; Shift: TShiftState);
+    procedure SelectTextTool(Sender: TObject);
+    procedure BeginTextInput(Sender: TObject);
+    procedure BalloonSettingsChanged(Sender: TObject);
+    procedure MemoFocusChanged(Sender: TObject);
+    procedure TogglePlacementInput(Sender: TObject);
+    procedure StartInlineText;
+    procedure FinishInlineText(Accept: Boolean);
+    procedure InlineTextAccept(Sender: TObject);
+    procedure InlineTextCancel(Sender: TObject);
+    procedure InlineTextChanged(Sender: TObject);
+    procedure InlineTextLeave(Sender: TObject);
+    function InlineTextActive: Boolean;
     function GlobalShortcutsAllowed: Boolean;
     procedure MenuOpening(Sender: TObject);
     procedure FitView(Sender: TObject);
@@ -201,6 +230,10 @@ type
     procedure ApplyPageBasis(const Basis: TComicPageBasis);
     procedure AdoptProject(Project: TComicProject; Dirty: Boolean);
     procedure OpenProject(Sender: TObject);
+    procedure OpenScript(Sender: TObject);
+    procedure ScriptLinesDropDown(Sender: TObject);
+    procedure ScriptLineSelected(Sender: TObject);
+    function SelectedScriptImage: string;
     procedure SaveProject(Sender: TObject);
     procedure Characters(Sender: TObject);
     procedure Images(Sender: TObject);
@@ -273,7 +306,7 @@ var
   MainForm: TMainForm;
 
 implementation
-uses ComicWorkspaceUI, ComicWorkspaceBridge, ComicWorkspaceGeneration, ComicWorkspaceViewport, ComicWorkspaceGeometry, ComicWorkspaceInteraction, ComicWorkspaceBalloons, ComicWorkspaceEffects
+uses ComicPageResize, ComicEffectSelection, ComicScriptAssist, ComicScript, ComicWorkspaceUI, ComicWorkspaceBridge, ComicWorkspaceGeneration, ComicWorkspaceViewport, ComicWorkspaceGeometry, ComicWorkspaceInteraction, ComicWorkspaceBalloons, ComicWorkspaceEffects
   {$IFDEF DEBUG}, ComicPerformance{$ENDIF};
 
 {$R *.dfm}
@@ -293,6 +326,8 @@ function TMainForm.GenerationSnapshot(const LibraryName,ProjectID,AssetID: strin
 begin Result:=RunWorkspaceGenerationSnapshot(Self,LibraryName,ProjectID,AssetID,References); end;
 function TMainForm.CreateGenerationWorker(Job: TComicGenerationJob; const Prompt: string; const References: TArray<string>): TComicCodexWorker;
 begin Result:=TComicCodexWorker.Create(Job.RequestID,Prompt,Job.Folder,Job.Root,Job.Prefix,References,FGenerationTimeoutMS); end;
+procedure TMainForm.GenerateScript(Sender: TObject);
+begin RunWorkspaceStartScriptGeneration(Self,Sender); end;
 procedure TMainForm.GenerateAsset(Sender: TObject);
 begin RunWorkspaceGenerateAsset(Self,Sender); end;
 function TMainForm.GenerationTargetMatches(Job: TComicGenerationJob): Boolean;
@@ -304,6 +339,7 @@ begin RunWorkspaceGenerationTick(Self,Sender); end;
 constructor TMainForm.Create(AOwner: TComponent);
 begin
   inherited; FPageIndex:=-1; FPanelIndex:=-1; FBalloonIndex:=-1; FTailIndex:=-1; FDragVertex:=-1; FScale:=1; FViewZoom:=1; FFillColor:=clWhite; FEffectIndex:=-1;
+  FTextToolVertical:=True;
   FTesting:=(ParamCount>0) and (ParamStr(1)='--self-test');
   {$IFDEF DEBUG}StartComicPerformance(DataRoot);{$ENDIF}
   FGenerationJobs:=TObjectList<TComicGenerationJob>.Create(True); FGenerationTimeoutMS:=600000;
@@ -321,8 +357,11 @@ begin
   try LoadPagePresets(FPagePresets,TPath.Combine(DataRoot,'Presets\PageBases.json'));
   except on E: Exception do begin FPagePresetWritable:=False; if not FTesting then Notify('ページ基準を読み込めません。元ファイルは保持します。'+sLineBreak+E.Message); end; end;
   FFontHistory:=TComicFontHistory.Create; FFontHistoryWritable:=True;
+  FFontHistory.LoadSize(TPath.Combine(DataRoot,'Presets\FontSize.json'));
   try FFontHistory.Load(TPath.Combine(DataRoot,'Presets\FontHistory.json'));
   except FFontHistoryWritable:=False; end;
+  FLastFontFamily:='Yu Gothic';
+  if Length(FFontHistory.Names)>0 then FLastFontFamily:=FFontHistory.Names[0];
   FGenerationPresets:=TObjectList<TComicGenerationPreset>.Create; FGenerationWritable:=True;
   try LoadGenerationPresets(FGenerationPresets,TPath.Combine(DataRoot,'Presets\Generation.json'));
   except on E: Exception do begin FGenerationWritable:=False; if not FTesting then Notify('画像生成プリセットを読み込めません。元ファイルは保持します。'+sLineBreak+E.Message); end; end;
@@ -344,7 +383,7 @@ begin
 end;
 destructor TMainForm.Destroy;
 // タイマーと所有する生成要求を先に止め、遅延コールバックが解放済みのUI・作品へ触れないようにする。
-begin FreeAndNil(FEffectPane); FEffectList:=nil; if FGenerationTimer<>nil then FGenerationTimer.Enabled:=False; CancelGeneration(nil); FGenerationJobs.Free; FGenerationJobs:=nil; if FView<>nil then FView.OnCaptureLost:=nil; EndViewPan(False); FBridge.Free; FProject.Free; FCharacters.Free; FRenderer.Free; FUndo.Free; FRedo.Free; FLayouts.Free; FPagePresets.Free; FFontHistory.Free; FGenerationPresets.Free; FEffectMaterials.Free; FRecent.Free; FIconButtons.Free; FGeometryPoints.Free; FSelectedPanels.Free; inherited; end;
+begin FreeAndNil(FInlineText); FreeAndNil(FEffectPane); FEffectList:=nil; if FGenerationTimer<>nil then FGenerationTimer.Enabled:=False; CancelGeneration(nil); FGenerationJobs.Free; FGenerationJobs:=nil; if FView<>nil then FView.OnCaptureLost:=nil; EndViewPan(False); FBridge.Free; FProject.Free; FCharacters.Free; FRenderer.Free; FUndo.Free; FRedo.Free; FLayouts.Free; FPagePresets.Free; FFontHistory.Free; FGenerationPresets.Free; FEffectMaterials.Free; FRecent.Free; FIconButtons.Free; FGeometryPoints.Free; FSelectedPanels.Free; inherited; end;
 procedure TMainForm.BridgeRequest(const Request: string; out Reply: string);
 begin HandleWorkspaceBridge(Self,Request,Reply); end;
 procedure TMainForm.RefreshEffectMaterials;
@@ -377,6 +416,7 @@ function TMainForm.GlobalShortcutsAllowed: Boolean;
 var Control: TWinControl; Window: HWND; Context: HIMC;
 begin
   Result:=False;
+  if InlineTextActive then Exit;
   if not Enabled or (HandleAllocated and not IsWindowEnabled(Handle)) or
     (Application.ModalLevel>0) then Exit;
   if (Screen.ActiveCustomForm<>nil) and (Screen.ActiveCustomForm<>Self) then Exit;
@@ -448,25 +488,15 @@ begin
 end;
 procedure TMainForm.RefreshUI;
 {$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
-var I,SelectedImage: Integer; A: TComicAsset; SelectedPages: TList<string>;
 begin
   {$IFDEF DEBUG}PerfScope.Start(cpRefreshUI);{$ENDIF}
-  FRefreshing:=True; SelectedPages:=TList<string>.Create;
+  FRefreshing:=True;
   try
-    for I:=0 to FPages.Count-1 do if FPages.Selected[I] then SelectedPages.Add(FPages.Items[I]);
-    FPages.Items.BeginUpdate; FImages.Items.BeginUpdate;
-    try
-      SelectedImage:=FImages.ItemIndex; FPages.Clear; FImages.Clear;
-      if FProject<>nil then begin
-        for I:=0 to FProject.Pages.Count-1 do FPages.Items.Add(FProject.Pages[I].ID);
-        FPageIndex:=Min(FPageIndex,FProject.Pages.Count-1); FPages.ItemIndex:=FPageIndex;
-        for I:=0 to FPages.Count-1 do FPages.Selected[I]:=SelectedPages.Contains(FPages.Items[I]);
-        if (FPages.SelCount=0) and (FPageIndex>=0) then FPages.Selected[FPageIndex]:=True;
-        for A in FProject.Assets do if A.FileName<>'' then FImages.Items.AddObject(A.Name,A);
-        if SelectedImage<FImages.Count then FImages.ItemIndex:=SelectedImage;
-        Caption:=FProject.Title+'  /  '+FProject.Episode+' — MangaMaker'; if FDirty then Caption:='* '+Caption;
-      end else Caption:='MangaMaker — AI漫画スタジオ';
-    finally FImages.Items.EndUpdate; FPages.Items.EndUpdate; end;
+    if FProject<>nil then FPageIndex:=Min(FPageIndex,FProject.Pages.Count-1);
+    FPages.Synchronize(FProject,FRenderer,FPageIndex); FImages.Synchronize(FProject);
+    if FProject<>nil then begin
+      Caption:=FProject.Title+'  /  '+FProject.Episode+' — MangaMaker'; if FDirty then Caption:='* '+Caption;
+    end else Caption:='MangaMaker — AI漫画スタジオ';
     FTabs.Enabled:=FProject<>nil;
     if (FProject=nil) and not HasCharacter then FStatus.SimpleText:='はじめに［キャラ管理］で人物名と参照画像を登録してください。'
     else if FProject=nil then FStatus.SimpleText:='［新規作品］で作品タイトルと話数を入力してください。'
@@ -474,7 +504,7 @@ begin
     else ShowPageStatus;
     UpdateIconState;
     FCanvas.Invalidate;
-  finally SelectedPages.Free; FRefreshing:=False; end;
+  finally FRefreshing:=False; end;
 end;
 procedure TMainForm.ModeClick(Sender: TObject);
 begin
@@ -489,7 +519,7 @@ begin
     FStatus.SimpleText:=TComicIconButton(Sender).Hint;
 end;
 procedure TMainForm.ImageSelectionChanged(Sender: TObject);
-begin UpdateIconState; end;
+begin CancelDrag; UpdateIconState; end;
 procedure TMainForm.IconNavigate(Sender: TObject; var Key: Word; Shift: TShiftState);
 var Button,Next: TComicIconButton; Candidates: TList<TComicIconButton>; Index,Step,I: Integer;
 begin
@@ -526,11 +556,11 @@ begin
       brInsertLayout: Button.Enabled:=CanEdit and (FImages.Count>0) and (FLayoutList.ItemIndex>=0);
       brManageLayout: Button.Enabled:=FLayoutLibraryWritable and (FLayoutList.ItemIndex>=0) and
         not TComicLayout(FLayoutList.Items.Objects[FLayoutList.ItemIndex]).BuiltIn;
-      brTool: Button.Enabled:=HasPage and ((Button.Tag=0) or (FImages.Count>0));
+      brTool: Button.Enabled:=HasPage and ((Button.Tag in [0,14]) or (FImages.Count>0));
       brDeletePanel: Button.Enabled:=HasPanel;
       brTail,brApplyText,brDeleteBalloon: Button.Enabled:=HasBalloon;
       brDeleteTail: Button.Enabled:=HasBalloon and (FTailIndex>=0) and (FTailIndex<Page.Balloons[FBalloonIndex].Tails.Count);
-      brTextPlacement: Button.Enabled:=HasBalloon and (Page.Balloons[FBalloonIndex].Text<>'');
+      brTextPlacement: Button.Enabled:=HasBalloon;
       brApplyFilter,brApplyFrame: Button.Enabled:=HasPanel;
       brDeleteEffect: begin Button.Enabled:=False;
         if HasPanel then case Button.Tag of
@@ -620,11 +650,24 @@ begin
   try if Dialog.ShowModal=mrOK then ApplyPageBasis(Dialog.ResultBasis); finally Dialog.Free; end;
 end;
 procedure TMainForm.ApplyPageBasis(const Basis: TComicPageBasis);
+var Before,Prepared: string; WasDirty: Boolean;
 begin
   if not Basis.Valid then raise Exception.Create('出力解像度またはページ外枠の余白が不正です。');
   if (FProject=nil) or FProject.PageBasis.Same(Basis) then Exit;
-  Checkpoint; ResetGeometryInput; FFirst:=False; FTool:=0;
-  FProject.SetPageBasis(Basis); Changed(False);
+  CancelDrag; Before:=FProject.Snapshot; WasDirty:=FDirty;
+  Prepared:=PreparePageBasisChange(FProject,Basis);
+  ResetGeometryInput; FFirst:=False; FTool:=0;
+  try
+    FProject.Restore(Prepared); Changed(False);
+  except
+    FProject.Restore(Before); FDirty:=WasDirty;
+    // 部分保存も元へ戻すことを試み、保存先が引き続き使用不可なら最初の例外を保持する。
+    try FProject.SaveDraft; except end;
+    RefreshUI; raise;
+  end;
+  FUndo.Add(Before); FRedo.Clear; if FUndo.Count>40 then FUndo.Delete(0);
+  if (FBalloonIndex>=0) and (FBalloonIndex<Page.Balloons.Count) then LoadBalloonControls(Page.Balloons[FBalloonIndex]);
+  LoadPanelEffectControls;
 end;
 procedure TMainForm.GenerationPresets(Sender: TObject);
 var Dialog: TComicGenerationDialog;
@@ -668,6 +711,44 @@ begin
     if not D.Execute then Exit;
     OpenProjectFile(D.FileName);
   finally D.Free; end;
+end;
+procedure TMainForm.OpenScript(Sender: TObject);
+var D: TOpenDialog; Before,Text,Title: string; P: TComicProject; Script: TComicScript; Imported: TScriptImportResult;
+begin
+  CancelDrag;
+  D:=TOpenDialog.Create(Self);
+  try
+    D.Filter:='台本テキスト (*.txt)|*.txt'; D.Options:=[ofFileMustExist,ofPathMustExist,ofNoChangeDir,ofEnableSizing];
+    if not D.Execute then Exit;
+    if TFile.GetSize(D.FileName)>4*1024*1024 then raise Exception.Create('台本は4MB以下にしてください。');
+    Text:=TFile.ReadAllText(D.FileName,TEncoding.UTF8);
+  finally D.Free; end;
+  if FProject=nil then begin
+    Script:=TComicScript.Create;
+    try Script.Read(Text); Title:=Script.Work.Get('作品名',Script.Work.Get('タイトル','台本からの試作')); finally Script.Free; end;
+    P:=TComicProject.Create;
+    try P.Initialize(Trim(Title),'第1話'); except P.Free; raise; end;
+    AdoptProject(P,False);
+  end;
+  Before:=FProject.Snapshot;
+  Imported:=ImportComicScript(FProject,FCharacters,Text); FinishImageManagement(Before);
+  FStatus.SimpleText:=Imported.Summary; Images(nil);
+end;
+function TMainForm.SelectedScriptImage: string;
+var B: TComicBalloon; P: TComicPanel;
+begin
+  Result:=''; if (Page=nil) or (FBalloonIndex<0) or (FBalloonIndex>=Page.Balloons.Count) then Exit;
+  B:=Page.Balloons[FBalloonIndex];
+  for P in Page.Panels do if P.ID=B.PanelID then Exit(P.ImageID);
+end;
+procedure TMainForm.ScriptLinesDropDown(Sender: TObject);
+begin
+  ScriptDialogueChoices(FProject,SelectedScriptImage,FScriptLines.Items); FScriptLines.ItemIndex:=0;
+end;
+procedure TMainForm.ScriptLineSelected(Sender: TObject);
+begin
+  if FRefreshing or (FScriptLines.ItemIndex<1) then Exit;
+  FText.Text:=ScriptDialogueText(FProject,FScriptLines.Text);
 end;
 procedure TMainForm.SaveProject(Sender: TObject);
 {$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
@@ -736,16 +817,19 @@ begin
   if not NeedProject then Exit;
   if not HasCharacter then begin Notify('参照画像付きのキャラを先に登録してください。'); Exit; end;
   Before:=FProject.Snapshot;
-  D:=TAssetDialog.CreateManager(Self,FProject.Assets,FProject,False,True,GenerationPresets,FCharacters,GenerateAsset,CancelGeneration);
+  D:=TAssetDialog.CreateManager(Self,FProject.Assets,FProject,False,True,GenerationPresets,FCharacters,GenerateAsset,CancelGeneration,GenerateScript);
   FAssetManager:=D;
-  try D.ShowModal; finally CancelGeneration(D); FAssetManager:=nil; D.Free; end;
-  FinishImageManagement(Before);
+  try
+    D.ShowModal; FinishImageManagement(Before,True);
+  finally CancelGeneration(D); FAssetManager:=nil; D.Free; end;
 end;
-procedure TMainForm.FinishImageManagement(const Before: string);
+procedure TMainForm.FinishImageManagement(const Before: string; AlreadyPersisted: Boolean);
 begin
   if FProject.Snapshot=Before then Exit;
   FUndo.Add(Before); FRedo.Clear; if FUndo.Count>40 then FUndo.Delete(0);
-  FRenderer.ClearCache; Changed(False);
+  FRenderer.ClearCache;
+  // 閉じる確認で保存した管理変更は二重に書かず、失敗を画面破棄後へ持ち越さない。
+  if AlreadyPersisted then begin FDirty:=True; RefreshUI; end else Changed(False);
 end;
 procedure TMainForm.AddPage(Sender: TObject);
 begin
@@ -781,7 +865,7 @@ end;
 procedure TMainForm.PageSelect(Sender: TObject);
 begin if FRefreshing then Exit; CancelGeneration(nil); CancelDrag; ResetGeometryInput; FSelectedPanels.Clear; FPageIndex:=FPages.ItemIndex; ResetViewport; FPanelIndex:=-1; FBalloonIndex:=-1; FFirst:=False; ShowPageStatus; UpdateIconState; FCanvas.Invalidate; end;
 procedure TMainForm.TabChanged(Sender: TObject);
-begin CancelDrag; ResetGeometryInput; FSelectedPanels.Clear; FEffectIndex:=-1; FTool:=0; FFirst:=False; if FTabs.ActivePageIndex<>3 then FBalloonIndex:=-1; UpdateIconState; FCanvas.Invalidate; end;
+begin CancelDrag; ResetGeometryInput; FSelectedPanels.Clear; FEffectIndex:=-1; FTool:=0; FFirst:=False; if FTabs.ActivePageIndex=3 then FPanelIndex:=-1 else FBalloonIndex:=-1; UpdateIconState; FCanvas.Invalidate; end;
 procedure TMainForm.DrawPageItem(Control: TWinControl; Index: Integer; Rect: TRect; State: TOwnerDrawState);
 {$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
 var R: TRect; B: TBitmap; I: Integer;
@@ -790,8 +874,7 @@ begin
   {$IFDEF DEBUG}PerfScope.Start(cpThumbnail);{$ENDIF}
   FPages.Canvas.FillRect(Rect); if (FProject=nil) or (Index>=FProject.Pages.Count) then Exit;
   R:=System.Types.Rect(Rect.Left+D(40),Rect.Top+D(8),Rect.Left+D(136),Rect.Top+D(144));
-  B:=TBitmap.Create; try B.SetSize(D(96),D(136)); FRenderer.Draw(B.Canvas,FProject,FProject.Pages[Index],System.Types.Rect(0,0,B.Width,B.Height),False);
-    FPages.Canvas.Draw(R.Left,R.Top,B); finally B.Free; end;
+  B:=FPages.Thumbnail(FProject,FRenderer,Index,D(96),D(136)); FPages.Canvas.Draw(R.Left,R.Top,B);
   FPages.Canvas.TextOut(Rect.Left+D(8),Rect.Top+D(10),IntToStr(Index+1));
   if (FPageDropIndex=Index) or ((Index=FPages.Count-1) and (FPageDropIndex=FPages.Count)) then begin
     FPages.Canvas.Pen.Color:=$E5B45B; FPages.Canvas.Pen.Width:=3;
@@ -1001,15 +1084,20 @@ begin
   FTool:=TControl(Sender).Tag; FFirst:=False; FNumber:=1;
   if FTool=8 then FStatus.SimpleText:='頂点をクリック。最初の点で閉じる。右クリックで最後の点を戻す。Escで中止。'
   else if FTool=9 then FStatus.SimpleText:='分割する四角・凸多角形の外周の1点目をクリック。Escで中止。'
-  else if FTool in [1,2,3,5,6,10] then FStatus.SimpleText:='対角の1点目、2点目をクリックしてください。Escで中止。'
+  else if FTool in [1,2,3,5,6,10] then begin
+    if FDragPlacementMenu.Checked then FStatus.SimpleText:='対角へドラッグして配置。Escで中止。設定・管理で2点クリックへ切替。'
+    else FStatus.SimpleText:='対角の2点をクリックして配置。Escで中止。設定・管理でドラッグへ切替。';
+  end
   else if FTool=4 then FStatus.SimpleText:='読む順番にコマをクリックしてください。'
-  else if FTool=13 then FStatus.SimpleText:='文字の内部をドラッグして移動。青8点で文字全体を比率維持で拡縮。'
+  else if FTool=13 then FStatus.SimpleText:='セリフ選択：ドラッグで移動、四隅で文字サイズ、辺で文字間隔・行間隔。クリック／Enterで入力。'
+  else if FTabs.ActivePageIndex=3 then FStatus.SimpleText:='吹き出しを移動・8点で拡縮。文字サイズは維持、Ctrlを押すと文字も拡縮。'
   else FStatus.SimpleText:='対象を選択。ドラッグで移動、青8点で拡縮、黄色で頂点移動。頂点／辺を右クリックで削除／追加。';
   UpdateIconState;
 end;
 procedure TMainForm.Paint(Sender: TObject);
 {$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
 var C: TCanvas; R: TRect; B: TRectF; HandlePoint: TPointF; HX,HY,I: Integer; IDs: TArray<string>; Panel: TComicPanel; ID: string;
+  Placement,Owner: TComicBalloon;
   function ScreenPoint(const P: TPointF): TPoint;
   begin Result:=Point(FPageRect.Left+Round(P.X*FScale),FPageRect.Top+Round(P.Y*FScale)); end;
   procedure GuideLine(const A,B: TPointF);
@@ -1025,9 +1113,21 @@ begin
     C.Brush.Style:=bsSolid; Exit;
   end;
   UpdateViewport;
-  FRenderer.Draw(C,FProject,Page,FPageRect,True);
+  if InlineTextActive then begin
+    FRenderer.Draw(C,FProject,Page,FPageRect,True,FInlineText.Preview);
+    FInlineText.DrawOverlay(C,FPageRect.TopLeft,FScale,FPageRect,Page);
+  end else begin
+    Owner:=nil; if (FBalloonIndex>=0) and (FBalloonIndex<Page.Balloons.Count) then Owner:=Page.Balloons[FBalloonIndex];
+    Placement:=nil;
+    if FFirst then Placement:=CreateBalloonPlacementPreview(FTool,FStart,FLast,Owner,TComicBalloonContour(Max(0,FContour.ItemIndex)));
+    try FRenderer.Draw(C,FProject,Page,FPageRect,True,Placement); finally Placement.Free; end;
+  end;
+  RunWorkspaceDrawImageSnapGuides(Self);
+  RunWorkspaceDrawDialogueSnapGuides(Self);
+  if FFirst and (FTool in [1,2,3]) then
+    DrawPanelPlacementPreview(C,FPageRect.TopLeft,FScale,FPageRect,FTool,FStart,FLast);
   B:=TRectF.Empty;
-  if (FPanelIndex>=0) and (FPanelIndex<Page.Panels.Count) then begin
+  if (FTabs.ActivePageIndex<>3) and (FPanelIndex>=0) and (FPanelIndex<Page.Panels.Count) then begin
     B:=Page.Panels[FPanelIndex].Bounds;
     if FTabs.ActivePageIndex=1 then B:=SelectedPanelBounds;
     if FTabs.ActivePageIndex=2 then B:=FRenderer.ImageBounds(FProject,Page.Panels[FPanelIndex]);
@@ -1036,13 +1136,15 @@ begin
   if (FTool=13) and (FBalloonIndex>=0) then B:=FRenderer.BalloonTextBounds(Page.Balloons[FBalloonIndex]);
   if FTabs.ActivePageIndex=4 then begin
     B:=TRectF.Empty;
-    if (FEffectCategory.ItemIndex=0) and (SelectedEffect<>nil) then B:=OverlayBounds(Page.Panels[FPanelIndex],SelectedEffect);
-    if (B.IsEmpty) and (FPanelIndex>=0) and (FPanelIndex<Page.Panels.Count) then begin
+    if (FEffectCategory.ItemIndex=0) and (SelectedEffect<>nil) then begin
+      DrawEffectSelection(C,OverlayBounds(Page.Panels[FPanelIndex],SelectedEffect),SelectedEffect.Rotation,FPageRect.TopLeft,FScale,CurrentPPI);
+    end;
+    if (SelectedEffect=nil) and (FPanelIndex>=0) and (FPanelIndex<Page.Panels.Count) then begin
       R.TopLeft:=ScreenPoint(Page.Panels[FPanelIndex].Bounds.TopLeft); R.BottomRight:=ScreenPoint(Page.Panels[FPanelIndex].Bounds.BottomRight);
       C.Pen.Color:=$E5B45B; C.Pen.Width:=2; C.Brush.Style:=bsClear; C.Rectangle(R); C.Brush.Style:=bsSolid;
     end;
   end;
-  if not B.IsEmpty and not ((FTabs.ActivePageIndex=3) and (FTool=12)) then begin
+  if not B.IsEmpty and not InlineTextActive and not ((FTabs.ActivePageIndex=3) and (FTool=12)) then begin
     R:=Rect(FPageRect.Left+Round(B.Left*FScale),FPageRect.Top+Round(B.Top*FScale),FPageRect.Left+Round(B.Right*FScale),FPageRect.Top+Round(B.Bottom*FScale));
     C.Brush.Style:=bsClear; C.Pen.Color:=$E5B45B; C.Pen.Width:=2; C.Rectangle(R);
     C.Brush.Style:=bsSolid; C.Brush.Color:=$E5B45B;
@@ -1074,10 +1176,6 @@ begin
         ScreenPoint(Panel.Bounds.BottomRight).X,ScreenPoint(Panel.Bounds.BottomRight).Y); C.Rectangle(R); Break;
     end;
     C.Brush.Style:=bsSolid;
-  end;
-  if FFirst then begin C.Pen.Color:=clRed; C.MoveTo(FPageRect.Left+Round(FStart.X*FScale)-6,FPageRect.Top+Round(FStart.Y*FScale));
-    C.LineTo(FPageRect.Left+Round(FStart.X*FScale)+6,FPageRect.Top+Round(FStart.Y*FScale));
-    if FTool in [7,11] then begin C.Pen.Style:=psDot; GuideLine(FStart,FLast); C.Pen.Style:=psSolid; end;
   end;
   if FGeometryPoints.Count>0 then begin
     C.Pen.Color:=$E5B45B; C.Pen.Width:=2;
@@ -1176,16 +1274,53 @@ end;
 // 主選択とUIDの選択集合を揃え、新規作成後のCtrl操作で古い複数選択が復活しないようにする。
 procedure TMainForm.SelectSinglePanel(Index: Integer);
 begin
+  FImageSnap:=Default(TComicImageSnap);
   FSelectedPanels.Clear; FPanelIndex:=Index; FBalloonIndex:=-1;
   if (Page<>nil) and (Index>=0) and (Index<Page.Panels.Count) then FSelectedPanels.Add(Page.Panels[Index].ID);
 end;
 procedure TMainForm.EditBalloonText(Sender: TObject);
 begin
-  if (FTabs.ActivePageIndex<>3) or (FBalloonIndex<0) or (FTool<>0) then Exit;
+  if (FTabs.ActivePageIndex<>3) or (FBalloonIndex<0) or not (FTool in [0,13]) then Exit;
   CancelDrag; LoadBalloonControls(Page.Balloons[FBalloonIndex]);
-  ActiveControl:=FText;
-  FText.SelectAll;
+  FTool:=14; FTextToolVertical:=Page.Balloons[FBalloonIndex].Vertical; StartInlineText;
 end;
+function TMainForm.InlineTextActive: Boolean;
+begin Result:=(FInlineText<>nil) and FInlineText.SessionActive; end;
+procedure TMainForm.BalloonToolKey(var Key: Word; Shift: TShiftState);
+begin RunWorkspaceBalloonToolKey(Self,Key,Shift); end;
+procedure TMainForm.SelectTextTool(Sender: TObject);
+begin RunWorkspaceSelectTextTool(Self); end;
+procedure TMainForm.BeginTextInput(Sender: TObject);
+begin if (Page=nil) or (FBalloonIndex<0) then Exit; FTool:=14; FTextToolVertical:=Page.Balloons[FBalloonIndex].Vertical; StartInlineText; end;
+procedure TMainForm.BalloonSettingsChanged(Sender: TObject);
+begin RunWorkspaceBalloonSettingsChanged(Self,Sender); end;
+procedure TMainForm.MemoFocusChanged(Sender: TObject);
+begin FTextEditUndo:=''; end;
+procedure TMainForm.TogglePlacementInput(Sender: TObject);
+begin
+  CancelDrag; FFirst:=False; FDragPlacementMenu.Checked:=not FDragPlacementMenu.Checked;
+  if FDragPlacementMenu.Checked then FStatus.SimpleText:='配置方法：ドラッグ。設定・管理で2点クリックへ切替できます。'
+  else FStatus.SimpleText:='配置方法：2点クリック。設定・管理でドラッグへ切替できます。';
+  FCanvas.Invalidate;
+end;
+procedure TMainForm.StartInlineText;
+begin RunWorkspaceStartInlineText(Self); end;
+procedure TMainForm.FinishInlineText(Accept: Boolean);
+begin RunWorkspaceFinishInlineText(Self,Accept); end;
+procedure TMainForm.InlineTextAccept(Sender: TObject);
+begin FinishInlineText(True); if not FTesting then ActiveControl:=FView; end;
+procedure TMainForm.InlineTextCancel(Sender: TObject);
+begin FinishInlineText(False); if not FTesting then ActiveControl:=FView; end;
+procedure TMainForm.InlineTextChanged(Sender: TObject);
+var Loading: Boolean;
+begin
+  Loading:=FBalloonControlsLoading; FBalloonControlsLoading:=True;
+  try if InlineTextActive then FText.Text:=FInlineText.Text;
+  finally FBalloonControlsLoading:=Loading; end;
+  FCanvas.Invalidate;
+end;
+procedure TMainForm.InlineTextLeave(Sender: TObject);
+begin FinishInlineText(True); end;
 procedure TMainForm.MouseDown(Sender: TObject; Button: TMouseButton; Shift: TShiftState; X,Y: Integer);
 begin RunWorkspaceMouseDown(Self,Sender,Button,Shift,X,Y); end;
 procedure TMainForm.MouseMove(Sender: TObject; Shift: TShiftState; X,Y: Integer);
@@ -1214,8 +1349,15 @@ function TMainForm.CreateBalloonTextDialog: TComicTextDialog;
 var Dialog: TComicTextDialog;
 begin
   Dialog:=TComicTextDialog.CreateEditor(Self,FText.Text,FVertical.Checked,FTesting);
-  Dialog.Editor.Font.Name:=FFontFamily.Text; Dialog.Editor.Font.Height:=-MulDiv(StrToIntDef(FFont.Text,40),Dialog.CurrentPPI,96);
+  Dialog.Editor.AutoWrap:=False;
+  Dialog.UseScript(FProject,SelectedScriptImage);
+  Dialog.Editor.Font.Name:=FFontFamily.Text; Dialog.Editor.Font.Height:=-MulDiv(StrToIntDef(FFont.Text,24),Dialog.CurrentPPI,96);
+  if FText.Text='' then Dialog.Editor.Font.Name:=FLastFontFamily;
   Dialog.Editor.Font.Color:=FTextColor; Dialog.Editor.Font.Style:=[];
+  if (Page<>nil) and (FBalloonIndex>=0) and (FBalloonIndex<Page.Balloons.Count) then begin
+    Dialog.Editor.CharacterSpacing:=Page.Balloons[FBalloonIndex].CharacterSpacing;
+    Dialog.Editor.LineSpacing:=Page.Balloons[FBalloonIndex].LineSpacing;
+  end;
   if FFontBold.Checked then Dialog.Editor.Font.Style:=Dialog.Editor.Font.Style+[fsBold];
   if FFontItalic.Checked then Dialog.Editor.Font.Style:=Dialog.Editor.Font.Style+[fsItalic];
   if FFontUnderline.Checked then Dialog.Editor.Font.Style:=Dialog.Editor.Font.Style+[fsUnderline];
@@ -1278,6 +1420,7 @@ procedure TMainForm.Key(Sender: TObject; var Key: Word; Shift: TShiftState);
 var Panel: TComicPanel;
 begin
   if not GlobalShortcutsAllowed then Exit;
+  BalloonToolKey(Key,Shift); if Key=0 then Exit;
   if FTabs.Enabled then begin
     if (Key=VK_TAB) and ((Shift=[ssCtrl]) or (Shift=[ssCtrl,ssShift])) then begin
       if ssShift in Shift then FPreviousModeMenu.Click else FNextModeMenu.Click;

@@ -11,7 +11,7 @@ uses Winapi.Windows, Winapi.Messages, Winapi.ShellAPI, Winapi.Imm,
   System.Hash, System.DateUtils, Vcl.Controls, Vcl.Forms,
   Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.ComCtrls, Vcl.Menus,
   Vcl.Dialogs, Vcl.Graphics, Vcl.Imaging.pngimage, ComicLayouts,
-  ComicIconButton, ComicEffectPane;
+  ComicIconButton, ComicEffectPane, ComicProjectLists;
 type
   TComicWorkspaceUIHelper = class helper for TMainForm
     procedure BuildWorkspaceUI;
@@ -52,6 +52,7 @@ begin
   M:=TMenuItem.Create(Self); M.Caption:='ファイル'; M.OnClick:=MenuOpening; Menu.Items.Add(M);
   Item('新規作品...',NewProject,ShortCut(Ord('N'),[ssCtrl]));
   Item('作品を開く...',OpenProject,ShortCut(Ord('O'),[ssCtrl]));
+  Item('台本を読み込む...',OpenScript);
   FRecentMenu:=TMenuItem.Create(Self); FRecentMenu.Caption:='読込履歴'; M.Add(FRecentMenu);
   for I:=0 to High(FRecentItems) do begin FRecentItems[I]:=TMenuItem.Create(Self); FRecentItems[I].Tag:=I; FRecentItems[I].OnClick:=RecentClick; FRecentMenu.Add(FRecentItems[I]); end;
   FRecentEmpty:=TMenuItem.Create(Self); FRecentEmpty.Caption:='履歴なし'; FRecentEmpty.Enabled:=False; FRecentMenu.Add(FRecentEmpty);
@@ -78,6 +79,7 @@ begin
   Item('ページ基準・共通プリセット...',PageSettings);
   Item('画像生成の共通指示プリセット...',GenerationPresets);
   Item('漫画効果素材...',EffectMaterials);
+  Item('-',nil); Item('2点配置をドラッグで操作',TogglePlacementInput); FDragPlacementMenu:=N; N.Checked:=True;
   FStatus:=TStatusBar.Create(Self); FStatus.Parent:=Self; FStatus.SimplePanel:=True; FStatus.Align:=alBottom;
   Left:=TPanel.Create(Self); Left.Parent:=Self; Left.Align:=alLeft; Left.Width:=D(184); Left.BevelOuter:=bvNone;
   Bar:=TPanel.Create(Self); Bar.Parent:=Left; Bar.Align:=alTop; Bar.Height:=D(82); Bar.BevelOuter:=bvNone;
@@ -87,7 +89,7 @@ begin
   Icon(Bar,'選択ページを削除',50,34,40,40,ciDelete,0,brDeletePage,DeletePage);
   Icon(Bar,'選択ページを上へ',94,34,40,40,ciUp,-1,brPageUp,MovePage);
   Icon(Bar,'選択ページを下へ',138,34,40,40,ciDown,1,brPageDown,MovePage);
-  FPages:=TListBox.Create(Self); FPages.Parent:=Left; FPages.Align:=alClient;
+  FPages:=TComicPageList.Create(Self); FPages.Parent:=Left; FPages.Align:=alClient;
   FPages.Style:=lbOwnerDrawFixed; FPages.ItemHeight:=D(158); FPages.OnDrawItem:=DrawPageItem; FPages.OnClick:=PageSelect;
   FPages.MultiSelect:=True; FPages.ExtendedSelect:=True; FPages.DragMode:=dmAutomatic;
   FPages.OnDragOver:=PagesDragOver; FPages.OnDragDrop:=PagesDragDrop; FPages.OnEndDrag:=PagesDragEnd;
@@ -118,9 +120,9 @@ begin
   Tab:=TabSheet('コマ編集'); Body:=Scrolling(Tab);
   LabelAt(Body,'Ctrl+クリック：コマを複数選択'+sLineBreak+'青8点：全体拡縮／黄色：頂点移動',12,10);
   Icon(Body,'選択・移動',12,62,44,44,ciSelect,0,brTool,Tool,False,1).Hint:='青の外周8点で拡縮、黄色の内側点で頂点移動。頂点を右クリックで削除、辺を右クリックで追加。';
-  Icon(Body,'四角コマ：対角2点をクリック',68,62,44,44,ciRectangle,1,brTool,Tool,False,1);
-  Icon(Body,'楕円コマ：対角2点をクリック',124,62,44,44,ciEllipse,2,brTool,Tool,False,1);
-  Icon(Body,'角丸コマ：対角2点をクリック',180,62,44,44,ciRounded,3,brTool,Tool,False,1);
+  Icon(Body,'四角コマ：対角へドラッグ／2点クリック',68,62,44,44,ciRectangle,1,brTool,Tool,False,1);
+  Icon(Body,'楕円コマ：対角へドラッグ／2点クリック',124,62,44,44,ciEllipse,2,brTool,Tool,False,1);
+  Icon(Body,'角丸コマ：対角へドラッグ／2点クリック',180,62,44,44,ciRounded,3,brTool,Tool,False,1);
   Icon(Body,'読む順番にコマをクリック',236,62,44,44,ciOrder,4,brTool,Tool,False,1);
   LabelAt(Body,'選択  /  四角  /  楕円  /  角丸  /  順序',12,114,28);
   Icon(Body,'多角形コマ',12,150,132,44,ciPolygon,8,brTool,Tool,True,1).Hint:='頂点をクリックし、最初の点で閉じます。右クリックで最後の点を戻す。Escで中止。';
@@ -132,9 +134,10 @@ begin
   Icon(Body,'現在のコマ割りを登録',12,340,268,40,ciRegister,0,brRegister,RegisterLayout,True);
   Body.VertScrollBar.Range:=D(392);
   Tab:=TabSheet('画像配置');
-  P:=TPanel.Create(Self); P.Parent:=Tab; P.Align:=alTop; P.Height:=D(56); P.BevelOuter:=bvNone;
+  P:=TPanel.Create(Self); P.Parent:=Tab; P.Align:=alTop; P.Height:=D(98); P.BevelOuter:=bvNone;
   LabelAt(P,'画像をコマへドラッグ。外周8点で拡縮。'+sLineBreak+'解除：コマを右クリック／選択してDel',10,8,44);
-  FImages:=TListBox.Create(Self); FImages.Parent:=Tab; FImages.Align:=alClient;
+  LabelAt(P,'コマ端・中央へ吸着（Altで解除）。'+sLineBreak+'スナップ設定はコマ編集と共通。',10,54,40);
+  FImages:=TComicImageList.Create(Self); FImages.Parent:=Tab; FImages.Align:=alClient;
   FImages.Style:=lbOwnerDrawFixed; FImages.ItemHeight:=D(104); FImages.OnDrawItem:=DrawImageItem;
   FImages.DragMode:=dmAutomatic; FImages.OnClick:=ImageSelectionChanged;
   FImagePopup:=TPopupMenu.Create(Self); FImagePopup.AutoPopup:=False;
@@ -142,34 +145,37 @@ begin
   FDetachImageMenu.ShortCut:=ShortCut(VK_DELETE,[]); FDetachImageMenu.OnClick:=DetachImage;
   FImagePopup.Items.Add(FDetachImageMenu);
   Tab:=TabSheet('吹き出し'); Body:=Scrolling(Tab);
-  Icon(Body,'選択・移動／ダブルクリックで文字再入力',12,12,40,44,ciSelect,0,brTool,Tool,False,3);
-  Icon(Body,'四角の吹き出し：対角2点をクリック',66,12,40,44,ciRectangle,10,brTool,Tool,False,3);
-  Icon(Body,'楕円の吹き出し：対角2点をクリック',120,12,40,44,ciBalloonEllipse,5,brTool,Tool,False,3);
-  Icon(Body,'角丸の吹き出し：対角2点をクリック',174,12,40,44,ciBalloonRounded,6,brTool,Tool,False,3);
-  Icon(Body,'文字配置：移動と比率を保つサイズ変更',228,12,40,44,ciApplyText,13,brTextPlacement,Tool,False,3);
-  Icon(Body,'三角しっぽ：根元と先端を2点指定',12,66,44,44,ciTail,7,brTail,Tail,False,3);
-  Icon(Body,'思考しっぽ：根元と先端を2点指定',72,66,44,44,ciThought,11,brTail,Tail,False,3);
-  Icon(Body,'しっぽ編集：根元・幅・先端の3点',132,66,44,44,ciSelect,12,brTail,Tail,False,3);
-  Icon(Body,'選択しっぽを削除',192,66,44,44,ciDelete,0,brDeleteTail,DeleteTail,False,3);
-  LabelAt(Body,'本体の選択 / 作成 / 文字配置'+sLineBreak+'しっぽ作成 / 3点編集 / 削除',12,118,44);
-  LabelAt(Body,'選択中の吹き出しのセリフ',12,164,24);
+  Icon(Body,'選択・移動 (S)／拡縮は文字サイズ維持、Ctrlで文字も拡縮／ダブルクリックで文字編集',12,12,40,44,ciSelect,0,brTool,Tool,False,3);
+  Icon(Body,'四角の吹き出し (Uで形状切替)：ドラッグ／2点クリック',66,12,40,44,ciRectangle,10,brTool,Tool,False,3);
+  Icon(Body,'楕円の吹き出し (Uで形状切替)：ドラッグ／2点クリック',120,12,40,44,ciBalloonEllipse,5,brTool,Tool,False,3);
+  Icon(Body,'角丸の吹き出し (Uで形状切替)：ドラッグ／2点クリック',174,12,40,44,ciBalloonRounded,6,brTool,Tool,False,3);
+  Icon(Body,'セリフ選択 (T/V)：移動／四隅は文字サイズ／辺は文字間隔・行間隔',228,12,40,44,ciApplyText,13,brTextPlacement,Tool,False,3);
+  Icon(Body,'三角しっぽ (Pで種類切替)：根元から先端へドラッグ／2点クリック',12,66,40,44,ciTail,7,brTail,Tail,False,3);
+  Icon(Body,'思考しっぽ (Pで種類切替)：根元から先端へドラッグ／2点クリック',66,66,40,44,ciThought,11,brTail,Tail,False,3);
+  Icon(Body,'しっぽ編集 (A)：根元・幅・先端の3点',120,66,40,44,ciSelect,12,brTail,Tail,False,3);
+  Icon(Body,'選択しっぽを削除 (Del)',174,66,40,44,ciDelete,0,brDeleteTail,DeleteTail,False,3);
+  Icon(Body,'文字入力 (Enter)：選択中のセリフを編集',228,66,40,44,ciApplyText,14,brTool,BeginTextInput,False,3);
+  LabelAt(Body,'S 本体 / T セリフ・再度Tで縦横切替'+sLineBreak+'Enter 入力 / U 図形 / P しっぽ / A 編集',12,118,44);
+  FScriptLines:=TComboBox.Create(Self); FScriptLines.Parent:=Body; FScriptLines.SetBounds(D(12),D(164),D(270),D(24));
+  FScriptLines.Style:=csDropDownList; FScriptLines.OnDropDown:=ScriptLinesDropDown; FScriptLines.OnChange:=ScriptLineSelected;
+  FScriptLines.Items.Add('台本からセリフを選択'); FScriptLines.ItemIndex:=0;
   FText:=TMemo.Create(Self); FText.Parent:=Body; FText.SetBounds(D(12),D(192),D(270),D(100)); FText.ScrollBars:=ssVertical;
   FText.ImeMode:=imOpen;
   Icon(Body,'専用文字入力',12,298,270,32,ciApplyText,0,brApplyText,TextInputDialog,True).Hint:='IMEとUTF-16編集バッファを使う専用入力。確定で反映、取消で作品を維持。';
-  FVertical:=TCheckBox.Create(Self); FVertical.Parent:=Body; FVertical.SetBounds(D(12),D(280),D(130),D(26)); FVertical.Caption:='縦書き';
+  FVertical:=TCheckBox.Create(Self); FVertical.Parent:=Body; FVertical.SetBounds(D(12),D(280),D(130),D(26)); FVertical.Caption:='縦書き'; FVertical.Checked:=True;
   FTransparent:=TCheckBox.Create(Self); FTransparent.Parent:=Body; FTransparent.SetBounds(D(144),D(280),D(130),D(26)); FTransparent.Caption:='文字だけ表示';
   FOverflow:=TCheckBox.Create(Self); FOverflow.Parent:=Body; FOverflow.SetBounds(D(12),D(312),D(270),D(26)); FOverflow.Caption:='コマ枠からはみ出すことを許可'; FOverflow.Checked:=True;
-  FFont:=TComboBox.Create(Self); FFont.Parent:=Body; FFont.SetBounds(D(12),D(354),D(92),D(28)); FFont.Style:=csDropDownList;
-  FFont.Items.AddStrings(['24','32','40','48','64','80']); FFont.ItemIndex:=2;
+  FFont:=TComboBox.Create(Self); FFont.Parent:=Body; FFont.SetBounds(D(12),D(354),D(92),D(28)); FFont.Style:=csDropDown;
+  FFont.Items.AddStrings(['16','20','24','28','32','40','48','64','80']); FFont.Text:=IntToStr(FFontHistory.LastSize);
   FFontBold:=TCheckBox.Create(Self); FFontBold.Parent:=Body; FFontBold.SetBounds(D(114),D(354),D(80),D(26)); FFontBold.Caption:='太字';
   FFontItalic:=TCheckBox.Create(Self); FFontItalic.Parent:=Body; FFontItalic.SetBounds(D(202),D(354),D(80),D(26)); FFontItalic.Caption:='斜体';
   FFontFamily:=TComboBox.Create(Self); FFontFamily.Parent:=Body; FFontFamily.SetBounds(D(12),D(394),D(270),D(28));
   FFontFamily.Style:=csDropDownList; FFontFamily.OnDropDown:=FontDropDown; FontDropDown(nil);
-  FFontFamily.ItemIndex:=FFontFamily.Items.IndexOf('Yu Gothic');
+  FFontFamily.ItemIndex:=FFontFamily.Items.IndexOf(FLastFontFamily);
   FFontUnderline:=TCheckBox.Create(Self); FFontUnderline.Parent:=Body; FFontUnderline.SetBounds(D(12),D(432),D(128),D(26)); FFontUnderline.Caption:='下線';
   FFontStrikeOut:=TCheckBox.Create(Self); FFontStrikeOut.Parent:=Body; FFontStrikeOut.SetBounds(D(154),D(432),D(128),D(26)); FFontStrikeOut.Caption:='取消線';
   ColorButton:=TButton.Create(Self); ColorButton.Parent:=Body; ColorButton.SetBounds(D(12),D(472),D(96),D(34)); ColorButton.Caption:='文字色...'; ColorButton.OnClick:=ChooseTextColor;
-  Icon(Body,'文字・設定を反映',114,468,168,40,ciApplyText,0,brApplyText,ApplyText,True);
+  LabelAt(Body,'変更はすぐに反映',114,536,28); L.Width:=D(168);
   Icon(Body,'選択した吹き出しを削除',12,524,270,40,ciDelete,1,brDeleteBalloon,DeleteObject,True);
   // 本体としっぽのツールを2段にまとめ、設定欄との重なりを避ける。
   FVertical.Top:=FVertical.Top+D(60); FTransparent.Top:=FTransparent.Top+D(60); FOverflow.Top:=FOverflow.Top+D(60);
@@ -177,16 +183,23 @@ begin
   FFontFamily.Top:=FFontFamily.Top+D(60); FFontUnderline.Top:=FFontUnderline.Top+D(60); FFontStrikeOut.Top:=FFontStrikeOut.Top+D(60);
   ColorButton.Top:=ColorButton.Top+D(60);
   for IconButton in FIconButtons do if IconButton.Parent=Body then begin
-    if (IconButton.Role=brApplyText) and (IconButton.Top=D(468)) then IconButton.Top:=D(528);
     if IconButton.Role=brDeleteBalloon then IconButton.Top:=D(704);
   end;
   LabelAt(Body,'本体の輪郭',12,586,24);
   FContour:=TComboBox.Create(Self); FContour.Parent:=Body; FContour.SetBounds(D(114),D(582),D(168),D(28));
   FContour.Style:=csDropDownList; FContour.Items.AddStrings(['通常','ギザギザ','波線','雲形']); FContour.ItemIndex:=0;
-  FContour.Hint:='基本形状を保った輪郭。選択後に「文字・設定を反映」で適用。'; FContour.ShowHint:=True;
+  FContour.Hint:='基本形状を保った輪郭。選択するとすぐに反映。'; FContour.ShowHint:=True;
   LabelAt(Body,'縁の太さ（出力px）',12,626,24);
   FBorderWidth:=TComboBox.Create(Self); FBorderWidth.Parent:=Body; FBorderWidth.SetBounds(D(12),D(654),D(96),D(28));
   FBorderWidth.Style:=csDropDownList; FBorderWidth.Items.AddStrings(['0','1','2','3','4','6','8','12']); FBorderWidth.ItemIndex:=3;
+  // 全コントロールの初期化後に接続し、読込による表示更新を編集として保存しない。
+  FText.OnChange:=BalloonSettingsChanged; FText.OnEnter:=MemoFocusChanged; FText.OnExit:=MemoFocusChanged;
+  FVertical.OnClick:=BalloonSettingsChanged; FTransparent.OnClick:=BalloonSettingsChanged;
+  FOverflow.OnClick:=BalloonSettingsChanged; FFont.OnChange:=BalloonSettingsChanged;
+  FFontFamily.OnChange:=BalloonSettingsChanged; FFontBold.OnClick:=BalloonSettingsChanged;
+  FFontItalic.OnClick:=BalloonSettingsChanged; FFontUnderline.OnClick:=BalloonSettingsChanged;
+  FFontStrikeOut.OnClick:=BalloonSettingsChanged; FContour.OnChange:=BalloonSettingsChanged;
+  FBorderWidth.OnChange:=BalloonSettingsChanged;
   ColorButton:=TButton.Create(Self); ColorButton.Parent:=Body; ColorButton.SetBounds(D(114),D(650),D(78),D(34)); ColorButton.Caption:='塗り色'; ColorButton.Tag:=1; ColorButton.OnClick:=ChooseTextColor;
   ColorButton:=TButton.Create(Self); ColorButton.Parent:=Body; ColorButton.SetBounds(D(204),D(650),D(78),D(34)); ColorButton.Caption:='縁色'; ColorButton.Tag:=2; ColorButton.OnClick:=ChooseTextColor;
   Body.VertScrollBar.Range:=D(748);

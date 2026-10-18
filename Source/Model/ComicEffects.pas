@@ -25,6 +25,7 @@ function ImportEffectMaterial(List: TObjectList<TComicEffectMaterial>; const Nam
 procedure RenameEffectMaterial(List: TObjectList<TComicEffectMaterial>; Material: TComicEffectMaterial; const Name,LibraryPath: string);
 procedure DeleteEffectMaterial(List: TObjectList<TComicEffectMaterial>; Material: TComicEffectMaterial; const LibraryPath: string);
 function OverlayBounds(Panel: TComicPanel; Overlay: TComicOverlay): TRectF;
+function FitEffectBounds(const PanelBounds: TRectF; ImageWidth,ImageHeight: Integer): TRectF;
 procedure PreservePanelOverlays(Panel: TComicPanel; const OriginalBounds: TRectF; NewIDs: Boolean);
 
 implementation
@@ -148,6 +149,15 @@ end;
 function OverlayBounds(Panel: TComicPanel; Overlay: TComicOverlay): TRectF;
 begin Result:=TRectF.Create(Panel.Bounds.Left+Overlay.Bounds.Left*Panel.Bounds.Width,Panel.Bounds.Top+Overlay.Bounds.Top*Panel.Bounds.Height,
   Panel.Bounds.Left+Overlay.Bounds.Right*Panel.Bounds.Width,Panel.Bounds.Top+Overlay.Bounds.Bottom*Panel.Bounds.Height); end;
+function FitEffectBounds(const PanelBounds: TRectF; ImageWidth,ImageHeight: Integer): TRectF;
+var Scale,W,H: Double;
+begin
+  if (PanelBounds.Width<=0) or (PanelBounds.Height<=0) or (ImageWidth<=0) or (ImageHeight<=0) then
+    raise Exception.Create('素材または配置先のコマの寸法が不正です。');
+  Scale:=Min(1,Min(PanelBounds.Width/ImageWidth,PanelBounds.Height/ImageHeight));
+  W:=ImageWidth*Scale/PanelBounds.Width; H:=ImageHeight*Scale/PanelBounds.Height;
+  Result:=TRectF.Create((1-W)/2,(1-H)/2,(1+W)/2,(1+H)/2);
+end;
 procedure PreservePanelOverlays(Panel: TComicPanel; const OriginalBounds: TRectF; NewIDs: Boolean);
 var Overlay: TComicOverlay; R: TRectF;
 begin

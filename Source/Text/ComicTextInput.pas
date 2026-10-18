@@ -7,17 +7,19 @@ interface
 uses Winapi.Windows, Winapi.Messages, Winapi.Imm, System.SysUtils, System.Types,
   System.Classes, System.Math, System.UITypes, System.Generics.Collections, Vcl.Controls, Vcl.Forms,
   Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.Graphics, Vcl.Clipbrd, ComicTextEditing, WindowsImeController,
-  ComicTextLayout, ComicTextUnits;
+  ComicTextLayout, ComicTextUnits, ComicModel;
 type
   TComicTextUndoState = record Text: string; Caret,Anchor: Integer; end;
   TComicTextInput = class(TCustomControl)
-  private
+  protected
     FInput: TScreenLayoutImeEdit;
     FBuffer,FComposition: string;
     FDisplayBuffer: string;
     FCaret,FAnchor: Integer;
     FPreferred: Single;
-    FVertical,FSession,FTesting,FComposing: Boolean;
+    FPreferredValid: Boolean;
+    FCharacterSpacing,FLineSpacing: Double;
+    FVertical,FSession,FTesting,FComposing,FAutoWrap: Boolean;
     FPrevious: TWindowsImeState;
     FLayout: TComicTextLayout;
     FUndo,FRedo: TList<TComicTextUndoState>;
@@ -28,8 +30,8 @@ type
     FAccept,FCancel: TNotifyEvent;
     procedure SetText(const Value: string);
     procedure SetVertical(Value: Boolean);
-    procedure RebuildLayout;
-    procedure EnsureCaretVisible;
+    procedure RebuildLayout; virtual;
+    procedure EnsureCaretVisible; virtual;
     procedure ScrollChanged(Sender: TObject);
     procedure Remember;
     procedure RestoreHistory(Undo: Boolean);
@@ -37,11 +39,11 @@ type
     function DisplayPoint(const P: TPoint): TPoint;
     function DisplayCaretIndex: Integer;
     procedure Committed(Sender: TObject; const Value: string);
-    procedure Composition(Sender: TObject; const Value: string; Cursor: Integer; Active: Boolean);
+    procedure Composition(Sender: TObject; const Value: string; Cursor: Integer; Active: Boolean); virtual;
     procedure InputKey(Sender: TObject; var Key: Word; Shift: TShiftState);
     procedure InputEnter(Sender: TObject);
-    procedure InputExit(Sender: TObject);
-    procedure Changed;
+    procedure InputExit(Sender: TObject); virtual;
+    procedure Changed; virtual;
     procedure UpdateImePosition;
     procedure CMFontChanged(var Message: TMessage); message CM_FONTCHANGED;
   protected
@@ -59,6 +61,9 @@ type
     property Text: string read FBuffer write SetText;
     property Font;
     property Vertical: Boolean read FVertical write SetVertical;
+    property AutoWrap: Boolean read FAutoWrap write FAutoWrap;
+    property CharacterSpacing: Double read FCharacterSpacing write FCharacterSpacing;
+    property LineSpacing: Double read FLineSpacing write FLineSpacing;
     property ScrollPosition: Integer read FScroll;
     property Layout: TComicTextLayout read FLayout;
     property Input: TScreenLayoutImeEdit read FInput;
@@ -75,6 +80,9 @@ type
   TComicTextDialog = class(TForm)
   private
     FEditor: TComicTextInput;
+    FScriptChoice: TComboBox;
+    FScriptProject: TComicProject;
+    procedure ScriptSelected(Sender: TObject);
     procedure Accept(Sender: TObject);
     procedure Cancel(Sender: TObject);
     procedure Shown(Sender: TObject);
@@ -82,12 +90,29 @@ type
     constructor CreateEditor(AOwner: TComponent; const Text: string; Vertical,Testing: Boolean);
     destructor Destroy; override;
     procedure KeyDown(var Key: Word; Shift: TShiftState); override;
+    procedure UseScript(Project: TComicProject; const ImageID: string);
     property Editor: TComicTextInput read FEditor;
   end;
 implementation
+uses ComicScriptAssist;
+procedure TComicTextDialog.UseScript(Project: TComicProject; const ImageID: string);
+begin
+  if (Project=nil) or (Project.ScriptSource='') then Exit; FScriptProject:=Project;
+  if FScriptChoice=nil then begin
+    FScriptChoice:=TComboBox.Create(Self); FScriptChoice.Parent:=Self; FScriptChoice.Align:=alTop;
+    FScriptChoice.Style:=csDropDownList; FScriptChoice.OnChange:=ScriptSelected;
+  end;
+  ScriptDialogueChoices(Project,ImageID,FScriptChoice.Items); FScriptChoice.ItemIndex:=0;
+end;
+procedure TComicTextDialog.ScriptSelected(Sender: TObject);
+begin
+  if (FScriptChoice=nil) or (FScriptChoice.ItemIndex<1) then Exit;
+  FEditor.Text:=ScriptDialogueText(FScriptProject,FScriptChoice.Text);
+end;
 constructor TComicTextInput.Create(AOwner: TComponent);
 begin
   inherited; Width:=600; Height:=340; Color:=$FAFAFA; Font.Name:='Yu Gothic UI'; Font.Size:=14;
+  FCharacterSpacing:=1; FLineSpacing:=1; FAutoWrap:=True;
   DoubleBuffered:=True; TabStop:=True; ImeMode:=imDisable; FPreferred:=-1;
   FLayout:=TComicTextLayout.Create; FLineAffinity:=-1;
   FUndo:=TList<TComicTextUndoState>.Create; FRedo:=TList<TComicTextUndoState>.Create;
@@ -104,12 +129,12 @@ destructor TComicTextInput.Destroy;
 begin EndSession; FreeAndNil(FLayout); FUndo.Free; FRedo.Free; inherited; end;
 procedure TComicTextInput.SetText(const Value: string);
 begin
-  FBuffer:=Value; FCaret:=Length(Value); FAnchor:=FCaret; FPreferred:=-1; FLineAffinity:=-1;
+  FBuffer:=Value; FCaret:=Length(Value); FAnchor:=FCaret; FPreferred:=-1; FPreferredValid:=False; FLineAffinity:=-1;
   FComposition:=''; FComposing:=False; FUndo.Clear; FRedo.Clear; FScroll:=0; Changed;
 end;
 procedure TComicTextInput.SetVertical(Value: Boolean);
 begin
-  if Value=FVertical then Exit; FVertical:=Value; FScroll:=0; FPreferred:=-1; FLineAffinity:=-1;
+  if Value=FVertical then Exit; FVertical:=Value; FScroll:=0; FPreferred:=-1; FPreferredValid:=False; FLineAffinity:=-1;
   if Value then begin FScrollBar.Kind:=sbHorizontal; FScrollBar.Align:=alBottom; FScrollBar.Height:=GetSystemMetrics(SM_CYHSCROLL); end
   else begin FScrollBar.Kind:=sbVertical; FScrollBar.Align:=alRight; FScrollBar.Width:=GetSystemMetrics(SM_CXVSCROLL); end;
   Changed;
@@ -125,7 +150,8 @@ begin
   FDisplayBuffer:=FBuffer;
   if FComposing and (FComposition<>'') then FDisplayBuffer:=Copy(FBuffer,1,Min(FCaret,FAnchor))+FComposition+
     Copy(FBuffer,Max(FCaret,FAnchor)+1,MaxInt);
-  FLayout.Build(Canvas,FDisplayBuffer,Area,FVertical);
+  FLayout.Build(Canvas,FDisplayBuffer,Area,FVertical,FAutoWrap);
+  FLayout.ApplySpacing(FCharacterSpacing,FLineSpacing,FVertical);
 end;
 function TComicTextInput.DisplayCaretIndex: Integer;
 var At,Next: Integer;
@@ -144,11 +170,11 @@ begin
   if FLayout=nil then Exit; Padding:=MulDiv(16,CurrentPPI,96); Step:=FLayout.Step;
   P:=FLayout.CaretStop(DisplayCaretIndex,FLineAffinity).Point;
   if FVertical then begin
-    Visible:=Max(1,ClientWidth-2*Padding); Limit:=Max(0,FLayout.LineCount*Step-Visible);
+    Visible:=Max(1,ClientWidth-2*Padding); Limit:=Max(0,Round((FLayout.LineCount-1)*Step*FLineSpacing)+Step-Visible);
     if P.X+FScroll<Padding then FScroll:=Padding-P.X;
     if P.X+Step+FScroll>ClientWidth-Padding then FScroll:=ClientWidth-Padding-P.X-Step;
   end else begin
-    Visible:=Max(1,ClientHeight-2*Padding); Limit:=Max(0,FLayout.LineCount*Step-Visible);
+    Visible:=Max(1,ClientHeight-2*Padding); Limit:=Max(0,Round((FLayout.LineCount-1)*Step*FLineSpacing)+Step-Visible);
     if P.Y-FScroll<Padding then FScroll:=P.Y-Padding;
     if P.Y+Step-FScroll>ClientHeight-Padding then FScroll:=P.Y+Step-ClientHeight+Padding;
   end;
@@ -191,7 +217,11 @@ procedure TComicTextInput.MoveLine(Direction: Integer; Extend: Boolean);
 var Stop: TComicCaretStop;
 begin
   RebuildLayout; Stop:=FLayout.CaretStop(FCaret,FLineAffinity);
-  if FPreferred<0 then if FVertical then FPreferred:=Stop.Point.Y else FPreferred:=Stop.Point.X;
+  // 中央配置では負の文字位置も有効なため、未設定を座標の符号で判定しない。
+  if not FPreferredValid then begin
+    if FVertical then FPreferred:=Stop.Point.Y else FPreferred:=Stop.Point.X;
+    FPreferredValid:=True;
+  end;
   Stop:=FLayout.AtLine(Stop.Line+Direction,Round(FPreferred),FVertical);
   FCaret:=Stop.Index; FLineAffinity:=Stop.Line; if not Extend then FAnchor:=FCaret;
 end;
@@ -233,13 +263,13 @@ procedure TComicTextInput.Committed(Sender: TObject; const Value: string);
 begin
   if not FSession then Exit;
   if Value='' then Exit; Remember;
-  InsertScreenLayoutTextAtCaret(FBuffer,FCaret,FAnchor,FPreferred,Value); FLineAffinity:=-1; Changed;
+  InsertScreenLayoutTextAtCaret(FBuffer,FCaret,FAnchor,FPreferred,Value); FPreferredValid:=False; FLineAffinity:=-1; Changed;
 end;
 procedure TComicTextInput.Composition(Sender: TObject; const Value: string; Cursor: Integer; Active: Boolean);
 begin
   if not FSession then Exit;
   FComposition:=Value; FCompositionCursor:=EnsureRange(Cursor,0,Length(Value)); FComposing:=Active;
-  FLineAffinity:=-1; RebuildLayout; EnsureCaretVisible; Invalidate;
+  FLineAffinity:=-1; FPreferredValid:=False; RebuildLayout; EnsureCaretVisible; Invalidate;
 end;
 procedure TComicTextInput.UpdateImePosition;
 var Context: HIMC; Form: TCompositionForm; Candidate: TCandidateForm; LogFont: TLogFont;
@@ -252,7 +282,7 @@ begin
     Candidate:=Default(TCandidateForm); Candidate.dwStyle:=CFS_EXCLUDE;
     Candidate.ptCurrentPos:=Point(0,FInput.Height); Candidate.rcArea:=Rect(0,0,Max(2,FCaretBounds.Width),FInput.Height);
     ImmSetCandidateWindow(Context,@Candidate);
-    if GetObject(Font.Handle,SizeOf(LogFont),@LogFont)<>0 then ImmSetCompositionFontW(Context,@LogFont);
+    if GetObject(FInput.Font.Handle,SizeOf(LogFont),@LogFont)<>0 then ImmSetCompositionFontW(Context,@LogFont);
   finally ImmReleaseContext(FInput.Handle,Context); end;
 end;
 procedure TComicTextInput.InputKey(Sender: TObject; var Key: Word; Shift: TShiftState);
@@ -262,6 +292,8 @@ var Extend: Boolean; Direction,Along: Integer; Stop: TComicCaretStop; Value: str
 begin
   if not FSession then Exit;
   if FComposing then Exit; // 未確定中の矢印/Enter/EscはIMEへ渡す。
+  if (ssCtrl in Shift) or not (((not FVertical) and (Key in [VK_UP,VK_DOWN])) or
+    (FVertical and (Key in [VK_LEFT,VK_RIGHT]))) then FPreferredValid:=False;
   Extend:=ssShift in Shift;
   if ssCtrl in Shift then begin
     case Key of
@@ -315,8 +347,7 @@ begin
     VK_ESCAPE: begin if Assigned(FCancel) then FCancel(Self); Key:=0; Exit; end;
     VK_HOME,VK_END: begin
       RebuildLayout; Stop:=FLayout.CaretStop(FCaret,FLineAffinity);
-      if Key=VK_HOME then Along:=0 else Along:=MaxInt;
-      Stop:=FLayout.AtLine(Stop.Line,Along,FVertical); FCaret:=Stop.Index; FLineAffinity:=Stop.Line; FPreferred:=-1;
+      Stop:=FLayout.LineEdge(Stop.Line,Key=VK_END); FCaret:=Stop.Index; FLineAffinity:=Stop.Line; FPreferred:=-1;
       if not Extend then FAnchor:=FCaret;
     end;
   else Exit; end;
@@ -355,7 +386,7 @@ begin
   inherited; if (Button<>mbLeft) or not FSession or FComposing then Exit;
   RebuildLayout; P:=Point(X,Y);
   if FVertical then Dec(P.X,FScroll) else Inc(P.Y,FScroll);
-  Stop:=FLayout.HitTest(P,FVertical); FCaret:=Stop.Index; FLineAffinity:=Stop.Line; FPreferred:=-1;
+  Stop:=FLayout.HitTest(P,FVertical); FCaret:=Stop.Index; FLineAffinity:=Stop.Line; FPreferred:=-1; FPreferredValid:=False;
   if not (ssShift in Shift) then FAnchor:=FCaret;
   FocusInput; EnsureCaretVisible; Invalidate;
 end;

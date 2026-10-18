@@ -245,7 +245,7 @@ procedure TComicTextTestsHelper.TextSessionChecks;
         Check(KeyValue=0,'Ctrl Enter commits dedicated dialog while accept button has focus');
         Check((Dialog.ModalResult=mrOK) and (Page.Balloons[0].Text=NewText) and (FUndo.Count=1),
           'dedicated text commit updates balloon as one undo operation');
-        FProject.Save; Loaded:=TComicProject.Create;
+        FProject.Save; Loaded:=CreateFixtureProject;
         try Loaded.Load(TPath.Combine(FProject.Folder,'Project.json'));
           Check(Loaded.Pages[0].Balloons[0].Text=NewText,'committed Unicode and multiline buffer save and reload');
         finally Loaded.Free; end;
@@ -275,7 +275,7 @@ procedure TComicTextTestsHelper.TextLayoutChecks;
     Reference,Shifted: TBitmap; PNG: TPngImage; X,Y,Saved: Integer;
   begin
     Layout:=TComicTextLayout.Create; Reference:=TBitmap.Create; Shifted:=TBitmap.Create;
-    Clone:=TComicProject.Create; PNG:=TPngImage.Create;
+    Clone:=CreateFixtureProject; PNG:=TPngImage.Create;
     try
       B.Canvas.Font.Name:='Yu Gothic'; B.Canvas.Font.Height:=-32;
       Joined:=WideChar($D83D)+WideChar($DC69)+WideChar($200D)+WideChar($D83D)+WideChar($DCBB);
@@ -310,7 +310,7 @@ procedure TComicTextTestsHelper.TextLayoutChecks;
       PNG.Assign(Shifted); PNG.SaveToFile(TPath.Combine(TestFolder,'text-shared-vertical-shifted.png'));
       Check(Same,'vertical rotations and shared text layout render identically under a translated DC');
       PNG.Assign(Reference); PNG.SaveToFile(TPath.Combine(TestFolder,'text-shared-vertical.png'));
-      Clone.Save; Loaded:=TComicProject.Create;
+      Clone.Save; Loaded:=CreateFixtureProject;
       try Loaded.Load(TPath.Combine(Clone.Folder,'Project.json'));
         Check(Loaded.Pages[0].Balloons[0].Text=Balloon.Text,'shared vertical layout text survives project save and reload');
       finally Loaded.Free; end;
@@ -321,22 +321,24 @@ procedure TComicTextTestsHelper.TextLayoutChecks;
 procedure RunTextLayoutChecks(Host: TComicTestForm);
 begin Host.TextLayoutChecks; end;
 procedure TComicTextTestsHelper.FontStyleChecks;
-  var Probe: TComicTestForm; Project,Reloaded: TComicProject; Balloon: TComicBalloon; Dialog: TComicTextDialog;
+  var Probe,Restart: TComicTestForm; Project,Reloaded: TComicProject; Balloon: TComicBalloon; Dialog: TComicTextDialog;
     History,CopyHistory: TComicFontHistory; FontFile,Path,Before,Choices: string; OriginalBytes: TBytes;
     Existed,Failed: Boolean; Lock: THandle; I,X,Y,RedPixels: Integer; PNG: TPngImage; KeyValue: Word;
+    RestartProject: TComicProject; RestartBefore: string; P1,P2: TPoint;
   begin
     FontFile:=TPath.Combine(DataRoot,'Presets\FontHistory.json'); Existed:=FileExists(FontFile);
     if Existed then OriginalBytes:=TFile.ReadAllBytes(FontFile);
     Probe:=TComicTestForm.Create(nil); History:=TComicFontHistory.Create; CopyHistory:=TComicFontHistory.Create; PNG:=TPngImage.Create;
     try
-      Project:=TComicProject.Create; Project.Initialize('文字装飾 fixture','1'); Probe.AdoptProject(Project,False);
+      Project:=CreateFixtureProject; Project.Initialize('文字装飾 fixture','1'); Probe.AdoptProject(Project,False);
       Balloon:=TComicBalloon.Create; Balloon.Transparent:=True; Balloon.Bounds:=TRectF.Create(100,100,900,1300);
       Probe.Page.Balloons.Add(Balloon); Probe.RefreshUI; Probe.FTabs.ActivePageIndex:=3; Probe.TabChanged(nil); Probe.FBalloonIndex:=0;
       Probe.LoadBalloonControls(Balloon); Before:=Project.Snapshot; Choices:=Probe.FFontFamily.Items.Text;
+      Probe.FBalloonControlsLoading:=True;
       Probe.FFontFamily.ItemIndex:=Probe.FFontFamily.Items.IndexOf('Consolas');
       Check(Probe.FFontFamily.ItemIndex>=0,'font selector offers installed Consolas');
       Probe.FFontBold.Checked:=True; Probe.FFontItalic.Checked:=True; Probe.FFontUnderline.Checked:=True; Probe.FFontStrikeOut.Checked:=True;
-      Probe.FTextColor:=clRed; Probe.FText.Text:='Style 12 日本語'; Probe.ApplyText(nil);
+      Probe.FTextColor:=clRed; Probe.FText.Text:='Style 12 日本語'; Probe.FBalloonControlsLoading:=False; Probe.ApplyText(nil);
       Check((Probe.Page.Balloons[0].FontFamily='Consolas') and (Probe.Page.Balloons[0].FontColor=clRed) and
         (Probe.Page.Balloons[0].FontStyle=[fsBold,fsItalic,fsUnderline,fsStrikeOut]),
         'applying balloon text stores family color and uniform decorations together');
@@ -344,7 +346,35 @@ procedure TComicTextTestsHelper.FontStyleChecks;
       Probe.FontDropDown(nil);
       Check((Probe.FFontFamily.Items[0]='Consolas') and (Probe.FFontFamily.Text='Consolas'),
         'next font dropdown places usage history first while retaining current selection');
-      Project.Save; Reloaded:=TComicProject.Create;
+      Restart:=TComicTestForm.Create(nil);
+      try
+        Check((Restart.FLastFontFamily='Consolas') and (Restart.FFontFamily.Text='Consolas') and
+          (Restart.FFontFamily.Items[0]='Consolas'),'restart restores last font and promotes history above installed fonts');
+        RestartProject:=CreateFixtureProject; RestartProject.Initialize('フォント引継ぎ fixture','1');
+        RestartProject.ImportImage(TPath.Combine(TestFolder,'reference.bmp'),''); Restart.AdoptProject(RestartProject,False);
+        Restart.FTabs.ActivePageIndex:=3; Restart.TabChanged(nil); Restart.ActiveControl:=Restart.FView;
+        Restart.HandleNeeded; B.SetSize(Restart.ClientWidth,Restart.ClientHeight); Restart.PaintTo(B.Canvas,0,0);
+        KeyValue:=Ord('U'); Restart.Key(Restart,KeyValue,[]);
+        P1:=Point(Restart.FPageRect.Left+Round(200*Restart.FScale),Restart.FPageRect.Top+Round(200*Restart.FScale));
+        P2:=Point(Restart.FPageRect.Left+Round(700*Restart.FScale),Restart.FPageRect.Top+Round(700*Restart.FScale));
+        Restart.MouseDown(Restart.FCanvas,mbLeft,[],P1.X,P1.Y);
+        Restart.MouseMove(Restart.FCanvas,[ssLeft],P2.X,P2.Y); Restart.MouseUp(Restart.FCanvas,mbLeft,[],P2.X,P2.Y);
+        Check((Restart.Page.Balloons.Count=1) and (Restart.Page.Balloons[0].FontFamily='Consolas'),
+          'new balloon inherits last selected font after restart');
+        Restart.Page.Balloons[0].FontFamily:='Yu Gothic'; Restart.LoadBalloonControls(Restart.Page.Balloons[0]);
+        Restart.BeginTextInput(nil);
+        Check((Restart.FInlineText.Preview.FontFamily='Consolas') and (Restart.Page.Balloons[0].FontFamily='Yu Gothic'),
+          'empty existing balloon starts input with last font in provisional preview');
+        Restart.FInlineText.Text:='新しい文字'; Restart.FinishInlineText(True);
+        Check(Restart.Page.Balloons[0].FontFamily='Consolas','accepting first input stores the preferred font with text');
+        Restart.Page.Balloons[0].FontFamily:='Yu Gothic'; Restart.LoadBalloonControls(Restart.Page.Balloons[0]); Restart.BeginTextInput(nil);
+        Check(Restart.FInlineText.Preview.FontFamily='Yu Gothic','editing existing dialogue preserves its own font'); Restart.FinishInlineText(False);
+        Restart.FBalloonIndex:=-1; RestartBefore:=RestartProject.Snapshot;
+        Restart.FFontFamily.ItemIndex:=Restart.FFontFamily.Items.IndexOf('Segoe UI'); Restart.FFontFamily.OnChange(Restart.FFontFamily);
+        Check((Restart.FLastFontFamily='Segoe UI') and (RestartProject.Snapshot=RestartBefore),
+          'font can become the next-input default without modifying any selected dialogue');
+      finally Restart.Free; end;
+      Project.Save; Reloaded:=CreateFixtureProject;
       try Reloaded.Load(TPath.Combine(Project.Folder,'Project.json'));
         Check((Reloaded.Pages[0].Balloons[0].FontFamily='Consolas') and (Reloaded.Pages[0].Balloons[0].FontColor=clRed) and
           (Reloaded.Pages[0].Balloons[0].FontStyle=[fsBold,fsItalic,fsUnderline,fsStrikeOut]),

@@ -1,6 +1,6 @@
 ﻿unit ComicAssetEditing;
 
-// 責務：人物グループの親切替・並替を扱い、各参照のIDと画像を保持する。
+// 責務：人物の親切替・並替と場面の登録削除を扱い、使用中の参照と画像ファイルを保持する。
 
 interface
 
@@ -10,6 +10,12 @@ type
   TComicAssetState = record
     Item: TComicAsset;
     Json: string;
+  end;
+  TComicSceneRemoval = record
+    IDs: TArray<string>;
+    AssignedPanels,DependentAssets,ScriptBindings: Integer;
+    function CanRemove: Boolean;
+    function Description(const Name: string): string;
   end;
 
 function AssetByID(List: TObjectList<TComicAsset>; const ID: string): TComicAsset;
@@ -21,10 +27,61 @@ procedure RestoreAssets(List: TObjectList<TComicAsset>; const State: TArray<TCom
 function PromoteCharacter(List: TObjectList<TComicAsset>; Child: TComicAsset): Boolean;
 function ReorderCharacter(List: TObjectList<TComicAsset>; Moving,Before: TComicAsset): Boolean;
 function NewSceneAsset(List: TObjectList<TComicAsset>; Source: TComicAsset; const Mode,Name,Notes,Title,Episode: string): TComicAsset;
+function SceneRemoval(Project: TComicProject; Asset: TComicAsset): TComicSceneRemoval;
+procedure RemoveSceneRegistration(Project: TComicProject; Asset: TComicAsset; Retired: TObjectList<TComicAsset>=nil);
 
 implementation
 
 uses System.JSON;
+
+function TComicSceneRemoval.CanRemove: Boolean;
+begin Result:=(Length(IDs)>0) and (AssignedPanels=0) and (DependentAssets=0) and (ScriptBindings=0); end;
+function TComicSceneRemoval.Description(const Name: string): string;
+begin
+  if CanRemove then Result:=Format('「%s」の登録を削除しますか？',[Name])
+  else Result:=Format('「%s」は参照されているため登録を削除できません。',[Name]);
+  Result:=Result+sLineBreak+Format('対象：選択項目と派生画像 計%d件'+sLineBreak+
+    'コマへの割り当て：%d件／他の画像からの参照：%d件／台本の対応：%d件'+sLineBreak+
+    '画像ファイルはディスクに残します。削除の保存は画像管理を閉じるときに行います。',
+    [Length(IDs),AssignedPanels,DependentAssets,ScriptBindings]);
+  if not CanRemove then Result:=Result+sLineBreak+'参照を解除してから削除してください。現在は削除できません。';
+end;
+function SceneRemoval(Project: TComicProject; Asset: TComicAsset): TComicSceneRemoval;
+var IDs: TList<string>; Item: TComicAsset; Page: TComicPage; Panel: TComicPanel;
+  State: TJSONValue; Pair: TJSONPair;
+begin
+  Result:=Default(TComicSceneRemoval);
+  if (Project=nil) or (Asset=nil) or (Project.Assets.IndexOf(Asset)<0) then Exit;
+  IDs:=TList<string>.Create; State:=nil;
+  try
+    IDs.Add(Asset.ID);
+    if Asset.ParentID='' then for Item in Project.Assets do if Item.ParentID=Asset.ID then IDs.Add(Item.ID);
+    for Page in Project.Pages do for Panel in Page.Panels do if IDs.Contains(Panel.ImageID) then Inc(Result.AssignedPanels);
+    for Item in Project.Assets do if not IDs.Contains(Item.ID) and
+      (IDs.Contains(Item.ParentID) or IDs.Contains(Item.SourceID) or IDs.Contains(Item.SceneID)) then Inc(Result.DependentAssets);
+    if Project.ScriptProgress<>'' then begin
+      State:=TJSONObject.ParseJSONValue(Project.ScriptProgress);
+      // 壊れた台本対応を無視して削除すると、修復後に参照を失うため安全側で停止する。
+      if not (State is TJSONObject) then raise Exception.Create('台本の素材対応が不正なため、画像登録を削除できません。');
+      for Pair in TJSONObject(State) do if (Pair.JsonValue is TJSONObject) and
+        IDs.Contains(JStr(TJSONObject(Pair.JsonValue),'uid','')) then Inc(Result.ScriptBindings);
+    end;
+    Result.IDs:=IDs.ToArray;
+  finally State.Free; IDs.Free; end;
+end;
+procedure RemoveSceneRegistration(Project: TComicProject; Asset: TComicAsset; Retired: TObjectList<TComicAsset>);
+var Info: TComicSceneRemoval; I: Integer; Item: TComicAsset;
+begin
+  // 直前にも使用状況を検査し、参照の残る登録や画像実体を削除しない。Undo用の元画像も残す。
+  Info:=SceneRemoval(Project,Asset);
+  if not Info.CanRemove then raise Exception.Create('使用中の画像登録は削除できません。');
+  for I:=Project.Assets.Count-1 downto 0 do
+    for var ID in Info.IDs do if Project.Assets[I].ID=ID then begin
+      Item:=Project.Assets[I];
+      if Retired=nil then Project.Assets.Delete(I) else begin Project.Assets.Extract(Item); Retired.Add(Item); end;
+      Break;
+    end;
+end;
 
 function NewSceneAsset(List: TObjectList<TComicAsset>; Source: TComicAsset; const Mode,Name,Notes,Title,Episode: string): TComicAsset;
 var Root: TComicAsset;

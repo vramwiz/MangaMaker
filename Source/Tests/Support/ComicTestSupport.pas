@@ -33,7 +33,13 @@ type
     procedure SelectOnly(Index: Integer);
     procedure IconTestClick(Sender: TObject);
   end;
+function CreateFixtureProject: TComicProject;
 implementation
+function CreateFixtureProject: TComicProject;
+begin
+  // 既存の座標・描画回帰は従来の1200×1700を明示し、新規作品の初期値変更から切り離す。
+  Result:=TComicProject.Create; Result.Width:=1200; Result.Height:=1700;
+end;
 procedure TComicTestForm.Check(Condition: Boolean; const Message: string);
   begin
     if not Condition then raise Exception.Create(Message);

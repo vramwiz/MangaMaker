@@ -2,7 +2,7 @@
 
 // 責務：素材・フィルター・枠装飾の適用を扱い、共通素材と作品内の配置を分ける。
 interface
-uses MangaMakerMainForm, System.Types, Vcl.Controls, Vcl.StdCtrls, ComicModel, ComicEffects;
+uses MangaMakerMainForm, System.Types, System.Classes, Vcl.Controls, Vcl.StdCtrls, ComicModel, ComicEffects;
 procedure RunWorkspaceRefreshEffectMaterials(Form: TMainForm);
 procedure RunWorkspaceEffectMaterials(Form: TMainForm; Sender: TObject);
 procedure RunWorkspaceEffectLibraryChanged(Form: TMainForm; Sender: TObject);
@@ -16,10 +16,16 @@ procedure RunWorkspaceApplyFilter(Form: TMainForm; Sender: TObject);
 procedure RunWorkspaceApplyFrame(Form: TMainForm; Sender: TObject);
 procedure RunWorkspaceChoosePanelBorderColor(Form: TMainForm; Sender: TObject);
 procedure RunWorkspaceDeleteEffect(Form: TMainForm; Sender: TObject);
+procedure RunWorkspaceEffectMouseDown(Form: TMainForm; const P: TPointF);
+procedure RunWorkspaceMoveEffect(Form: TMainForm; const P: TPointF; Shift: TShiftState);
+procedure RunWorkspaceUpdateEffectCursor(Form: TMainForm; const P: TPointF);
 implementation
-uses Winapi.Windows, Winapi.Messages, Winapi.ShellAPI, Winapi.Imm, System.SysUtils, System.Classes, System.UITypes, System.Math, System.IOUtils, System.Generics.Collections, System.JSON, System.Hash, System.DateUtils, Vcl.Forms, Vcl.ExtCtrls, Vcl.ComCtrls, Vcl.Menus, Vcl.Dialogs, Vcl.Graphics, Vcl.Imaging.pngimage, ComicEffectDialog;
+uses Winapi.Windows, Winapi.Messages, Winapi.ShellAPI, Winapi.Imm, System.SysUtils, System.UITypes, System.Math, System.IOUtils, System.Generics.Collections, System.JSON, System.Hash, System.DateUtils, Vcl.Forms, Vcl.ExtCtrls, Vcl.ComCtrls, Vcl.Menus, Vcl.Dialogs, Vcl.Graphics, Vcl.Imaging.pngimage, ComicEffectDialog, ComicOverlayTransform;
 type
   TComicWorkspaceEffectsHelper = class helper for TMainForm
+    procedure EffectMouseDown(const P: TPointF);
+    procedure MoveEffect(const P: TPointF; Shift: TShiftState);
+    procedure UpdateEffectCursor(const P: TPointF);
     procedure ExecuteRefreshEffectMaterials;
     procedure ExecuteEffectMaterials(Sender: TObject);
     procedure ExecuteEffectLibraryChanged(Sender: TObject);
@@ -95,20 +101,23 @@ function RunWorkspaceSelectedEffect(Form: TMainForm): TComicOverlay;
 begin Result:=Form.ExecuteSelectedEffect; end;
 function TComicWorkspaceEffectsHelper.ExecuteHitEffect(Panel: TComicPanel; const P: TPointF): Integer;
 var I: Integer;
-begin Result:=-1; for I:=Panel.Overlays.Count-1 downto 0 do if OverlayBounds(Panel,Panel.Overlays[I]).Contains(P) then Exit(I); end;
+begin Result:=-1; for I:=Panel.Overlays.Count-1 downto 0 do
+  if OverlayContains(OverlayBounds(Panel,Panel.Overlays[I]),Panel.Overlays[I].Rotation,P) then Exit(I); end;
 
 function RunWorkspaceHitEffect(Form: TMainForm; Panel: TComicPanel; const P: TPointF): Integer;
 begin Result:=Form.ExecuteHitEffect(Panel,P); end;
 procedure TComicWorkspaceEffectsHelper.ExecuteApplyEffectMaterial(PanelIndex: Integer; Material: TComicEffectMaterial);
-var Overlay: TComicOverlay; Source,Dest: string; PNG: TPngImage;
+var Overlay: TComicOverlay; Source,Dest: string; PNG: TPngImage; Bounds: TRectF;
 begin
   CancelDrag;
   if (Page=nil) or (PanelIndex<0) or (PanelIndex>=Page.Panels.Count) or (Material=nil) or not HasCharacter then Exit;
   if Page.Panels[PanelIndex].Overlays.Count>=1000 then raise Exception.Create('コマの効果素材は1000件までです。');
   Source:=EffectMaterialPath(Material); PNG:=TPngImage.Create;
   try PNG.LoadFromFile(Source); if (PNG.Width<1) or (PNG.Height<1) or (Int64(PNG.Width)*PNG.Height>64000000) then raise Exception.Create('効果素材のサイズが不正です。');
+    Bounds:=FitEffectBounds(Page.Panels[PanelIndex].Bounds,PNG.Width,PNG.Height);
   finally PNG.Free; end;
   Overlay:=TComicOverlay.Create; Overlay.MaterialID:=Material.ID; Overlay.FileName:='Effects\'+NewUID+'.png'; Dest:=SafeChild(FProject.Folder,Overlay.FileName);
+  Overlay.Bounds:=Bounds;
   try
     ForceDirectories(ExtractFilePath(Dest)); TFile.Copy(Source,Dest,False); Checkpoint;
     Page.Panels[PanelIndex].Overlays.Add(Overlay); Overlay:=nil; FPanelIndex:=PanelIndex; FEffectIndex:=Page.Panels[PanelIndex].Overlays.Count-1;
@@ -181,4 +190,63 @@ end;
 
 procedure RunWorkspaceDeleteEffect(Form: TMainForm; Sender: TObject);
 begin Form.ExecuteDeleteEffect(Sender); end;
+procedure TComicWorkspaceEffectsHelper.EffectMouseDown(const P: TPointF);
+var Overlay: TComicOverlay; R: TRectF; Handle: Integer;
+begin
+  Overlay:=SelectedEffect; R:=TRectF.Empty; Handle:=0;
+  if (FEffectCategory.ItemIndex=0) and (Overlay<>nil) then begin
+    R:=OverlayBounds(Page.Panels[FPanelIndex],Overlay);
+    Handle:=HitOverlayHandle(R,Overlay.Rotation,P,FScale,CurrentPPI);
+  end;
+  if (FEffectCategory.ItemIndex<>0) or ((Handle=0) and ((Overlay=nil) or not OverlayContains(R,Overlay.Rotation,P))) then begin
+    FPanelIndex:=HitPanel(P); FEffectIndex:=-1;
+    if (FPanelIndex>=0) and (FEffectCategory.ItemIndex=0) then FEffectIndex:=HitEffect(Page.Panels[FPanelIndex],P);
+  end;
+  FBalloonIndex:=-1; LoadPanelEffectControls; UpdateIconState; FCanvas.Invalidate;
+  Overlay:=SelectedEffect; if Overlay=nil then Exit;
+  FDragBounds:=OverlayBounds(Page.Panels[FPanelIndex],Overlay); FDragEffectAngle:=Overlay.Rotation;
+  FDragHandle:=HitOverlayHandle(FDragBounds,Overlay.Rotation,P,FScale,CurrentPPI);
+  FDragSnapshot:=FProject.Snapshot; FDragMoved:=False; FDragging:=True; FStart:=P; FLast:=P;
+  FDragVertex:=-1; FDragTailHandle:=0;
+  if not FTesting then FCanvas.MouseCapture:=True;
+  if FDragHandle=9 then FStatus.SimpleText:='ドラッグで効果を回転。Shiftで15度刻み、Escで取消。';
+end;
+procedure TComicWorkspaceEffectsHelper.MoveEffect(const P: TPointF; Shift: TShiftState);
+var Overlay: TComicOverlay; Panel: TComicPanel; R: TRectF; Delta: TPointF;
+begin
+  Overlay:=SelectedEffect; if Overlay=nil then Exit; Panel:=Page.Panels[FPanelIndex];
+  if FDragHandle=9 then begin
+    Overlay.Rotation:=DragOverlayAngle(FDragBounds,FDragEffectAngle,FStart,P,ssShift in Shift);
+    FStatus.SimpleText:=Format('効果の回転：%.1f°（Shiftで15度刻み、Escで取消）',[Overlay.Rotation]);
+  end else begin
+    Delta:=P-FStart; R:=FDragBounds;
+    if FDragHandle<>0 then R:=ResizeRotatedOverlay(FDragBounds,FDragEffectAngle,Delta,FDragHandle)
+    else R.Offset(Delta.X,Delta.Y);
+    R:=TRectF.Create((R.Left-Panel.Bounds.Left)/Panel.Bounds.Width,(R.Top-Panel.Bounds.Top)/Panel.Bounds.Height,
+      (R.Right-Panel.Bounds.Left)/Panel.Bounds.Width,(R.Bottom-Panel.Bounds.Top)/Panel.Bounds.Height);
+    if IsNan(R.Left) or IsNan(R.Top) or IsNan(R.Width) or IsNan(R.Height) or IsInfinite(R.Left) or IsInfinite(R.Top) or
+      IsInfinite(R.Width) or IsInfinite(R.Height) or (Abs(R.Left)>1000) or (Abs(R.Top)>1000) or
+      (R.Width<=0) or (R.Height<=0) or (R.Width>1000) or (R.Height>1000) then Exit;
+    Overlay.Bounds:=R;
+  end;
+  FLast:=P; FCanvas.Invalidate;
+end;
+procedure TComicWorkspaceEffectsHelper.UpdateEffectCursor(const P: TPointF);
+const Cursors: array[0..3] of TCursor = (crSizeNWSE,crSizeNS,crSizeNESW,crSizeWE);
+var Overlay: TComicOverlay; R: TRectF; Handle,Direction: Integer;
+begin
+  if (FTabs.ActivePageIndex<>4) or (FEffectCategory.ItemIndex<>0) then Exit;
+  Overlay:=SelectedEffect; if Overlay=nil then Exit; R:=OverlayBounds(Page.Panels[FPanelIndex],Overlay);
+  Handle:=HitOverlayHandle(R,Overlay.Rotation,P,FScale,CurrentPPI); if FDragging then Handle:=FDragHandle;
+  if Handle=9 then FCanvas.Cursor:=crHandPoint
+  else if Handle>0 then begin
+    Direction:=(Handle-1+Round(Overlay.Rotation/45)+8) mod 4; FCanvas.Cursor:=Cursors[Direction];
+  end else if FDragging or OverlayContains(R,Overlay.Rotation,P) then FCanvas.Cursor:=crSizeAll;
+end;
+procedure RunWorkspaceEffectMouseDown(Form: TMainForm; const P: TPointF);
+begin Form.EffectMouseDown(P); end;
+procedure RunWorkspaceMoveEffect(Form: TMainForm; const P: TPointF; Shift: TShiftState);
+begin Form.MoveEffect(P,Shift); end;
+procedure RunWorkspaceUpdateEffectCursor(Form: TMainForm; const P: TPointF);
+begin Form.UpdateEffectCursor(P); end;
 end.

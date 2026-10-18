@@ -6,6 +6,8 @@ interface
 
 uses System.SysUtils, System.JSON, System.Generics.Collections, ComicModel;
 
+const BuiltInPagePresetCount=3;
+
 type
   TComicPagePreset = class
     ID,Name: string;
@@ -25,7 +27,7 @@ implementation
 uses System.IOUtils, System.Math;
 
 constructor TComicPagePreset.Create;
-begin inherited; ID:=NewUID; Basis.Width:=1200; Basis.Height:=1700;
+begin inherited; ID:=NewUID; Basis.Width:=DefaultPageWidth; Basis.Height:=DefaultPageHeight;
   Basis.Left:=60; Basis.Top:=60; Basis.Right:=60; Basis.Bottom:=60; end;
 function TComicPagePreset.Json: TJSONObject;
 begin
@@ -51,10 +53,16 @@ begin
     raise Exception.Create('ページ基準プリセットが不正です。');
 end;
 procedure SeedPagePresets(List: TObjectList<TComicPagePreset>);
-var Preset: TComicPagePreset;
+  procedure Add(const ID,Name: string; Width,Height: Integer);
+  var Preset: TComicPagePreset;
+  begin
+    Preset:=TComicPagePreset.Create; Preset.ID:=ID; Preset.Name:=Name;
+    Preset.Basis.Width:=Width; Preset.Basis.Height:=Height; Preset.BuiltIn:=True; List.Add(Preset);
+  end;
 begin
-  Preset:=TComicPagePreset.Create; Preset.ID:='builtin-standard'; Preset.Name:='標準 1200 × 1700 / 余白60';
-  Preset.BuiltIn:=True; List.Add(Preset);
+  Add('builtin-niconico','ニコニコ漫画 650 × 975 / 余白60',DefaultPageWidth,DefaultPageHeight);
+  Add('builtin-standard','1200 × 1700 / 余白60',1200,1700);
+  Add('builtin-portrait-2x','1300 × 1950 / 余白60',1300,1950);
 end;
 procedure SavePagePresets(List: TObjectList<TComicPagePreset>; const FileName: string);
 var J: TJSONObject; A: TJSONArray; Preset: TComicPagePreset;

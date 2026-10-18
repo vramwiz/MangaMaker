@@ -27,6 +27,8 @@ type
     procedure Read(J: TJSONObject);
   end;
 
+const BuiltInLayoutCount = 17;
+
 procedure SeedLayouts(List: TObjectList<TComicLayout>);
 procedure LoadLayouts(List: TObjectList<TComicLayout>; const FileName: string);
 procedure SaveLayouts(List: TObjectList<TComicLayout>; const FileName: string);
@@ -112,6 +114,37 @@ begin
     Panels.Add(Item);
   end;
 end;
+procedure SeedAdditionalLayouts(List: TObjectList<TComicLayout>);
+var L: TComicLayout; Kind: Integer;
+  procedure Add(X,Y,R,B: Single);
+  var Item: TLayoutPanel;
+  begin Item.Bounds:=TRectF.Create(X,Y,R,B); Item.Shape:=0; Item.Number:=L.Panels.Count+1; L.Panels.Add(Item); end;
+begin
+  // 標準は保存ファイルへ混ぜない。既存5件のID・順序・形を保ち、新しい固定IDを末尾に加える。
+  // コマは段内で右から左、段は上から下。段をまたぐ縦長では右列を読み終えて左列へ進む。
+  for Kind:=6 to BuiltInLayoutCount do begin
+    L:=TComicLayout.Create; L.BuiltIn:=True; L.ID:='builtin-'+IntToStr(Kind); List.Add(L);
+    case Kind of
+      6: begin L.Name:='上下・上大2コマ'; Add(60,60,1140,1100); Add(60,1124,1140,1640); end;
+      7: begin L.Name:='上下・下大2コマ'; Add(60,60,1140,576); Add(60,600,1140,1640); end;
+      8: begin L.Name:='左右・右大2コマ'; Add(440,60,1140,1640); Add(60,60,416,1640); end;
+      9: begin L.Name:='左右・左大2コマ'; Add(784,60,1140,1640); Add(60,60,760,1640); end;
+      10: begin L.Name:='上2コマ＋下大コマ'; Add(612,60,1140,576); Add(60,60,588,576); Add(60,600,1140,1640); end;
+      11: begin L.Name:='横長・3段3コマ'; Add(60,60,1140,570); Add(60,594,1140,1106); Add(60,1130,1140,1640); end;
+      12: begin L.Name:='右縦長＋左2コマ'; Add(612,60,1140,1640); Add(60,60,588,838); Add(60,862,588,1640); end;
+      13: begin L.Name:='右2コマ＋左縦長'; Add(612,60,1140,838); Add(612,862,1140,1640); Add(60,60,588,1640); end;
+      14: begin L.Name:='横長・4段4コマ'; Add(60,60,1140,437); Add(60,461,1140,838);
+        Add(60,862,1140,1239); Add(60,1263,1140,1640); end;
+      15: begin L.Name:='3段・横長＋2コマ＋横長'; Add(60,60,1140,570); Add(612,594,1140,1106);
+        Add(60,594,588,1106); Add(60,1130,1140,1640); end;
+      16: begin L.Name:='3段・2コマ＋横長＋2コマ'; Add(612,60,1140,570); Add(60,60,588,570);
+        Add(60,594,1140,1106); Add(612,1130,1140,1640); Add(60,1130,588,1640); end;
+      17: begin L.Name:='標準・3段6コマ'; Add(612,60,1140,570); Add(60,60,588,570);
+        Add(612,594,1140,1106); Add(60,594,588,1106); Add(612,1130,1140,1640); Add(60,1130,588,1640); end;
+    end;
+  end;
+end;
+
 procedure SeedLayouts(List: TObjectList<TComicLayout>);
 var L: TComicLayout; Kind: Integer;
   procedure Add(X,Y,R,B: Single);
@@ -129,6 +162,7 @@ begin
       5: begin L.Name:='大コマ＋2コマ'; Add(60,60,1140,974); Add(612,998,1140,1640); Add(60,998,588,1640); end;
     end;
   end;
+  SeedAdditionalLayouts(List);
 end;
 procedure SaveLayouts(List: TObjectList<TComicLayout>; const FileName: string);
 var J: TJSONObject; A: TJSONArray; L: TComicLayout; Panel: TLayoutPanel; Version: Integer;

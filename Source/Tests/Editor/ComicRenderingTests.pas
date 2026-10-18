@@ -27,7 +27,7 @@ procedure TComicRenderingTestsHelper.RenderChecks;
   var Clone: TComicProject; Reference,Shifted,Warm: TBitmap; Extra: TComicBalloon;
     X,Y,SavedDC: Integer; Same: Boolean;
   begin
-    Clone:=TComicProject.Create; Reference:=TBitmap.Create; Shifted:=TBitmap.Create; Warm:=TBitmap.Create;
+    Clone:=CreateFixtureProject; Reference:=TBitmap.Create; Shifted:=TBitmap.Create; Warm:=TBitmap.Create;
     try
       Clone.Folder:=FProject.Folder; Clone.Restore(FProject.Snapshot);
       Extra:=TComicBalloon.Create; Extra.Text:='二つ目の吹き出し'; Extra.Bounds:=TRectF.Create(650,300,950,600);
@@ -119,18 +119,20 @@ procedure TComicRenderingTestsHelper.EffectChecks;
       Json:=Material.Json; try AtomicWrite(Path,'{"version":1,"materials":['+Json.ToJSON+',42]}'); finally Json.Free; end;
       Failed:=False; try LoadEffectMaterials(Broken,Path); except Failed:=True; end;
       Check(Failed and (Broken.Count=0),'malformed effect library cannot publish a valid prefix'); AtomicWrite(Path,LibraryBytes);
-      Project:=TComicProject.Create; Project.Initialize('漫画効果 fixture','1'); Probe.AdoptProject(Project,False); Project.ImportImage(TPath.Combine(TestFolder,'reference.bmp'),'');
+      Project:=CreateFixtureProject; Project.Initialize('漫画効果 fixture','1'); Probe.AdoptProject(Project,False); Project.ImportImage(TPath.Combine(TestFolder,'reference.bmp'),'');
       Panel:=TComicPanel.Create; Panel.Bounds:=TRectF.Create(100,100,900,1300); OriginalBounds:=Panel.Bounds; Probe.Page.Panels.Add(Panel); Probe.RefreshUI;
       Probe.FModeButtons[4].Click; CaptureEffect('effects-material-empty'); Probe.FEffectList.Items.AddObject(Material.Name,Material); Probe.FEffectList.ItemIndex:=Probe.FEffectList.Count-1;
       PointA:=OriginalBounds.CenterPoint; X:=Probe.FPageRect.Left+Round(PointA.X*Probe.FScale); Y:=Probe.FPageRect.Top+Round(PointA.Y*Probe.FScale);
       Before:=Project.Snapshot; Probe.DragOver(Probe.FCanvas,Probe.FEffectList,X,Y,dsDragMove,Accept); Check(Accept,'material D&D accepts a target panel');
       Probe.DragDrop(Probe.FCanvas,Probe.FEffectList,X,Y);
-      Check((CurrentPanel.Overlays.Count=1) and (CurrentPanel.Overlays[0].MaterialID=ID) and (OverlayBounds(CurrentPanel,CurrentPanel.Overlays[0])=OriginalBounds),
-        'material drop creates a separately identified panel-sized overlay');
+      Bounds:=OverlayBounds(CurrentPanel,CurrentPanel.Overlays[0]);
+      Check((CurrentPanel.Overlays.Count=1) and (CurrentPanel.Overlays[0].MaterialID=ID) and
+        (Abs(Bounds.Width-64)<0.001) and (Abs(Bounds.Height-64)<0.001) and (Bounds.CenterPoint.Distance(OriginalBounds.CenterPoint)<0.001),
+        'small material drop preserves native pixels and centers its separately identified overlay');
       CopyPath:=SafeChild(Project.Folder,CurrentPanel.Overlays[0].FileName); Check(FileExists(CopyPath),'applied material receives a project-local PNG snapshot');
       Reference.SetSize(320,452); Probe.FRenderer.Draw(Reference.Canvas,Project,Probe.Page,Rect(0,0,320,452),False);
-      Color:=Reference.Canvas.Pixels[80,110]; Check((GetRValue(Color)>240) and (GetGValue(Color)<170),'half-transparent PNG blends its red ink with the panel background');
-      Check(Reference.Canvas.Pixels[187,110]=$F5F2EF,'transparent PNG half preserves the panel background');
+      Color:=Reference.Canvas.Pixels[129,187]; Check((GetRValue(Color)>240) and (GetGValue(Color)<170),'half-transparent PNG blends its red ink with the panel background');
+      Check(Reference.Canvas.Pixels[138,187]=$F5F2EF,'transparent PNG half preserves the panel background');
       After:=Project.Snapshot; Probe.Undo(nil); Check(Project.Snapshot=Before,'material application undoes as one operation'); Probe.Redo(nil); Check(Project.Snapshot=After,'material application redo restores its retained PNG');
       for K:=1 to 8 do begin
         Probe.FPanelIndex:=0; Probe.FEffectIndex:=0; Bounds:=OverlayBounds(CurrentPanel,CurrentPanel.Overlays[0]); PointA:=EditHandles(Bounds)[K-1];
@@ -138,9 +140,9 @@ procedure TComicRenderingTestsHelper.EffectChecks;
         Probe.MouseDown(Probe.FCanvas,mbLeft,[],X,Y); Check(Probe.FDragHandle=K,'effect material handle '+IntToStr(K)+' is selectable');
         Probe.MouseMove(Probe.FCanvas,[ssLeft],X+14,Y+10); Probe.MouseUp(Probe.FCanvas,mbLeft,[],X+14,Y+10);
         Bounds:=OverlayBounds(CurrentPanel,CurrentPanel.Overlays[0]);
-        Check((CurrentPanel.Bounds=OriginalBounds) and (Abs(Bounds.Width/Bounds.Height-OriginalBounds.Width/OriginalBounds.Height)<0.0001),
+        Check((CurrentPanel.Bounds=OriginalBounds) and (Abs(Bounds.Width/Bounds.Height-1)<0.0001),
           'effect material handle '+IntToStr(K)+' keeps aspect ratio and owner geometry');
-        Project.Save; Reloaded:=TComicProject.Create;
+        Project.Save; Reloaded:=CreateFixtureProject;
         try Reloaded.Load(TPath.Combine(Project.Folder,'Project.json')); Check(Reloaded.Snapshot=Project.Snapshot,'effect handle saves and reloads '+IntToStr(K)); finally Reloaded.Free; end;
         Probe.Undo(nil); Check(Project.Snapshot=Before,'effect handle undo restores exact placement '+IntToStr(K));
       end;
@@ -198,7 +200,7 @@ procedure TComicRenderingTestsHelper.EffectChecks;
       Check(ExportSequence(Project,Probe.FRenderer,False)=0,'unchanged material snapshot reuses cached page PNG');
       PNG.LoadFromFile(CopyPath); PNG.Canvas.Pixels[0,0]:=clGreen; PNG.SaveToFile(CopyPath);
       Check(ExportSequence(Project,Probe.FRenderer,False)=1,'same-path effect PNG byte changes invalidate the page cache');
-      Before:=Project.Snapshot; Project.Save; Reloaded:=TComicProject.Create;
+      Before:=Project.Snapshot; Project.Save; Reloaded:=CreateFixtureProject;
       try Reloaded.Load(TPath.Combine(Project.Folder,'Project.json')); Check(Reloaded.Snapshot=Before,'complete material ownership and style data save and reload'); finally Reloaded.Free; end;
       // Undo後は出力状態が未確定へ戻る仕様なので、DPI操作の比較条件も同じ状態に揃える。
       Project.Pages[0].OutputRevision:=-1;
@@ -236,7 +238,7 @@ procedure TComicRenderingTestsHelper.BlurScaleChecks;
   var Project: TComicProject; Panel: TComicPanel; Renderer: TComicRenderer; Pattern,Full,Preview,Reduced: TBitmap;
     Asset: TComicAsset; Path: string; X,Y,Size: Integer; Same: Boolean;
   begin
-    Project:=TComicProject.Create; Renderer:=TComicRenderer.Create; Pattern:=TBitmap.Create; Full:=TBitmap.Create; Preview:=TBitmap.Create; Reduced:=TBitmap.Create;
+    Project:=CreateFixtureProject; Renderer:=TComicRenderer.Create; Pattern:=TBitmap.Create; Full:=TBitmap.Create; Preview:=TBitmap.Create; Reduced:=TBitmap.Create;
     try
       Project.Initialize('ぼかし解像度 fixture','1'); Project.Width:=320; Project.Height:=320;
       Pattern.PixelFormat:=pf24bit; Pattern.SetSize(320,320); Pattern.Canvas.Brush.Color:=clWhite; Pattern.Canvas.FillRect(Rect(0,0,320,320));
@@ -260,7 +262,7 @@ procedure TComicRenderingTestsHelper.BulkDataChecks;
   var Project,Reloaded: TComicProject; Page: TComicPage; Panel: TComicPanel; Balloon: TComicBalloon; Renderer: TComicRenderer;
     Metrics: TStringList; Bitmap: TBitmap; ImageID,Text,Snapshot,Path: string; I,K,Rendered: Integer; Started: UInt64; Basis: TComicPageBasis;
   begin
-    Project:=TComicProject.Create; Reloaded:=TComicProject.Create; Renderer:=TComicRenderer.Create; Metrics:=TStringList.Create; Bitmap:=TBitmap.Create;
+    Project:=CreateFixtureProject; Reloaded:=CreateFixtureProject; Renderer:=TComicRenderer.Create; Metrics:=TStringList.Create; Bitmap:=TBitmap.Create;
     try
       Project.Initialize('大量データ fixture','1'); Project.Pages.Clear; Basis:=Project.PageBasis;
       Basis.Width:=240; Basis.Height:=360; Basis.Left:=10; Basis.Right:=10; Basis.Top:=10; Basis.Bottom:=10; Project.SetPageBasis(Basis);

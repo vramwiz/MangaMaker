@@ -12,8 +12,8 @@ uses Winapi.Windows, Winapi.Messages, Winapi.ShellAPI, Winapi.Imm,
   Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.ComCtrls, Vcl.Menus,
   Vcl.Dialogs, Vcl.Graphics, Vcl.Imaging.pngimage, ComicModel,
   ComicAssetDialog, ComicLayouts, ComicExport, ComicEditingTests,
-  ComicGeometryTests, ComicTextTests, ComicBalloonsTests, ComicAssetsTests,
-  ComicIntegrationTests, ComicLibrariesTests, ComicRenderingTests, ComicWorkspaceTests, ComicMaterialPaneTests;
+  ComicGeometryTests, ComicImageLayoutTests, ComicTextTests, ComicInlineTextTests, ComicBalloonsTests, ComicAssetsTests,
+  ComicIntegrationTests, ComicLibrariesTests, ComicRenderingTests, ComicWorkspaceTests, ComicMaterialPaneTests, ComicScriptTests, ComicAssetDialogTests, ComicPlacementTests, ComicEffectRotationTests, ComicPageResizeTests, ComicDragDropTests, ComicBalloonSelectionTests, ComicPageRefreshTests, ComicPageDefaultsTests;
 type
   TComicSelfTestHelper = class helper for TComicTestForm
     procedure Execute;
@@ -33,14 +33,17 @@ begin
     TFile.Copy(TPath.Combine(TestFolder,'reference.bmp'),TPath.Combine(DataRoot,'Characters\reference.bmp'),True);
     Check(HasCharacter,'character name and reference enable production');
     WriteAssets(FCharacters,TPath.Combine(DataRoot,'Characters\Library.json'));
+    RunPageRefreshChecks(Self);
+    RunPageDefaultsChecks(Self);
     RunSafetyChecks(Self);
-    FProject:=TComicProject.Create; FProject.Initialize('保存テスト・日本語','第1話'); FPageIndex:=0;
+    RunScriptChecks(Self);
+    FProject:=CreateFixtureProject; FProject.Initialize('保存テスト・日本語','第1話'); FPageIndex:=0;
     A:=FProject.ImportImage(TPath.Combine(TestFolder,'reference.bmp'),''); A.Name:='場面画像'; AssetID:=A.ID;
     P:=TComicPanel.Create; P.Bounds:=TRectF.Create(60,60,1140,1100); P.ImageID:=AssetID; P.Zoom:=1.5; P.PanX:=42; Page.Panels.Add(P);
     Balloon:=TComicBalloon.Create; Balloon.Text:='漫画を作ろう！'; Balloon.HasTail:=True; Balloon.PanelID:=P.ID;
     Balloon.TailX:=480; Balloon.TailY:=540; Page.Balloons.Add(Balloon);
     FProject.Save; Snapshot:=FProject.Snapshot;
-    Loaded:=TComicProject.Create;
+    Loaded:=CreateFixtureProject;
     try
       Loaded.Load(TPath.Combine(FProject.Folder,'Project.json'));
       Check(Loaded.Snapshot=Snapshot,'UTF-8 project save and load roundtrip');
@@ -52,6 +55,10 @@ begin
     RunRenderChecks(Self);
     RunEditingChecks(Self);
     RunTextSessionChecks(Self);
+    RunInlineTextChecks(Self);
+    RunPlacementChecks(Self); RunDialogueRefinementChecks(Self); RunManualTextFlowChecks(Self);
+    RunEffectRotationChecks(Self); RunPageResizeChecks(Self); RunDragDropChecks(Self);
+    RunBalloonSelectionChecks(Self);
     RunTextNavigationChecks(Self);
     RunTextLayoutChecks(Self);
     RunPageBasisChecks(Self);
@@ -60,6 +67,7 @@ begin
     RunFontStyleChecks(Self);
     RunCreatedPanelSelectionChecks(Self);
     RunTailChecks(Self);
+    RunBalloonInteractionChecks(Self);
     RunBalloonContourChecks(Self);
     RunTextPlacementChecks(Self);
     RunTextScaledWrappingChecks(Self);
@@ -67,12 +75,14 @@ begin
     RunBridgeChecks(Self);
     RunCharacterGroupChecks(Self);
     RunSceneGenerationChecks(Self);
+    RunAssetDialogChecks(Self);
     RunEffectChecks(Self);
     RunDragCommandChecks(Self);
     RunBlurScaleChecks(Self);
     RunRecentProjectChecks(Self);
     RunGapSnapChecks(Self);
     RunPanelTransformSnapChecks(Self);
+    RunImageLayoutChecks(Self);
     RunExportReviewChecks(Self);
     RunBulkDataChecks(Self);
     RunIconChecks(Self);
@@ -86,9 +96,9 @@ begin
     LibraryCopy:=TObjectList<TComicLayout>.Create;
     try
       SeedLayouts(LibraryCopy); LoadLayouts(LibraryCopy,TPath.Combine(DataRoot,'Presets\Layouts.json'));
-      Check((LibraryCopy.Count=6) and (LibraryCopy.Last.ID=Layout.ID) and (LibraryCopy.Last.Name=Layout.Name),
+      Check((LibraryCopy.Count=BuiltInLayoutCount+1) and (LibraryCopy.Last.ID=Layout.ID) and (LibraryCopy.Last.Name=Layout.Name),
         'shared custom layout persists with stable ID and Japanese name');
-      Loaded:=TComicProject.Create;
+      Loaded:=CreateFixtureProject;
       try
         Loaded.Pages.Add(TComicPage.Create); LibraryCopy.Last.Apply(Loaded.Pages[0],600,850);
         Check((Loaded.Pages[0].Panels[0].Bounds.Right=450) and (Loaded.Pages[0].Panels[0].Shape=1),
@@ -99,7 +109,7 @@ begin
       AtomicWrite(TPath.Combine(TestFolder,'bad-layouts.json'),'{"version":1,"layouts":[{"id":"broken","name":"bad","width":1200,"height":1700,"panels":[{"x":0,"y":0,"w":-1,"h":100}]}]}');
       Failed:=False;
       try LoadLayouts(LibraryCopy,TPath.Combine(TestFolder,'bad-layouts.json')); except Failed:=True; end;
-      Check(Failed and (LibraryCopy.Count=6),'invalid library preserves existing layouts');
+      Check(Failed and (LibraryCopy.Count=BuiltInLayoutCount+1),'invalid library preserves existing layouts');
     finally LibraryCopy.Free; end;
     FLayoutList.Items.AddObject(Layout.Name,Layout);
     RefreshUI; FirstID:=Page.ID;
@@ -131,7 +141,7 @@ begin
     SelectOnly(2); FTabs.ActivePageIndex:=2; TabChanged(nil); Capture('image-drop-before');
     FImages.ItemIndex:=0;
     Check(not Assigned(FImages.OnDblClick),'image assignment has no double-click shortcut');
-    Check(FImages.Top=MulDiv(56,CurrentPPI,96),'image list uses the space freed by assignment controls');
+    Check(FImages.Top=MulDiv(98,CurrentPPI,96),'image list follows the assignment and snap guidance header');
     R:=FPageRect;
     DragDrop(FCanvas,FImages,R.Left+Round(800*FScale),R.Top+Round(400*FScale));
     Check(Page.Panels[0].ImageID=AssetID,'image drop assigns the panel under the pointer without prior selection');

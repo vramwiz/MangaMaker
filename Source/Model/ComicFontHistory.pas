@@ -1,6 +1,6 @@
 ﻿unit ComicFontHistory;
 
-// 責務：確定したフォントの使用履歴を保存し、選択中のリスト順を動かさない。
+// 責務：フォント履歴と明示指定した文字サイズを保存し、作品の選択では既定値を変えない。
 
 interface
 
@@ -10,11 +10,17 @@ type
   TComicFontHistory = class
   private
     FNames: TList<string>;
+    FLastSize: Integer;
+    FSizeFile: string;
+    FSizeWritable: Boolean;
   public
     constructor Create;
     destructor Destroy; override;
     procedure Load(const FileName: string);
     procedure Remember(const Name,FileName: string);
+    procedure LoadSize(const FileName: string);
+    procedure RememberSize(Value: Integer);
+    property LastSize: Integer read FLastSize;
     function Choices(Installed: TStrings): TArray<string>;
     function Names: TArray<string>;
   end;
@@ -24,11 +30,35 @@ implementation
 uses System.SysUtils, System.JSON, System.IOUtils, ComicModel;
 
 constructor TComicFontHistory.Create;
-begin inherited; FNames:=TList<string>.Create; end;
+begin inherited; FNames:=TList<string>.Create; FLastSize:=24; FSizeWritable:=True; end;
 destructor TComicFontHistory.Destroy;
 begin FNames.Free; inherited; end;
 function TComicFontHistory.Names: TArray<string>;
 begin Result:=FNames.ToArray; end;
+procedure TComicFontHistory.LoadSize(const FileName: string);
+var J: TJSONValue; Value: Integer;
+begin
+  FSizeFile:=FileName; J:=nil;
+  try
+    if not FileExists(FileName) then Exit;
+    J:=TJSONObject.ParseJSONValue(TFile.ReadAllText(FileName,TEncoding.UTF8));
+    if not (J is TJSONNumber) or not TryStrToInt(J.Value,Value) or (Value<1) or (Value>1000) then
+      raise Exception.Create('文字サイズの設定が不正です。');
+    FLastSize:=Value;
+  except
+    // 壊れた設定は上書きせず、今回の起動中だけ既定値から使い続ける。
+    FSizeWritable:=False;
+  end;
+  J.Free;
+end;
+procedure TComicFontHistory.RememberSize(Value: Integer);
+begin
+  if (Value<1) or (Value>1000) then Exit;
+  FLastSize:=Value;
+  if not FSizeWritable or (FSizeFile='') then Exit;
+  try AtomicWrite(FSizeFile,IntToStr(Value));
+  except FSizeWritable:=False; raise; end;
+end;
 procedure TComicFontHistory.Load(const FileName: string);
 var J,V: TJSONValue; Prepared: TList<string>; Name: string;
 begin

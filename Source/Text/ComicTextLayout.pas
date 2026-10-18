@@ -24,13 +24,15 @@ type
     Step,LineCount: Integer;
     constructor Create;
     destructor Destroy; override;
-    procedure Build(Canvas: TCanvas; const Text: string; const Area: TRect; Vertical: Boolean);
+    procedure Build(Canvas: TCanvas; const Text: string; const Area: TRect; Vertical: Boolean; AutoWrap: Boolean=True);
     function CaretStop(Index: Integer; Line: Integer=-1): TComicCaretStop;
     function HitTest(const P: TPoint; Vertical: Boolean): TComicCaretStop;
     function AtLine(Line,Along: Integer; Vertical: Boolean): TComicCaretStop;
+    function LineEdge(Line: Integer; Last: Boolean): TComicCaretStop;
     function Bounds: TRect;
     procedure Translate(DX,DY: Integer);
     procedure CenterIn(const Area: TRect);
+    procedure ApplySpacing(CharacterSpacing,LineSpacing: Double; Vertical: Boolean);
   end;
 
 procedure DrawComicTextCell(Canvas: TCanvas; const Text: string;
@@ -106,7 +108,34 @@ begin
     (Area.Top+Area.Bottom-TextBounds.Top-TextBounds.Bottom) div 2);
 end;
 
-procedure TComicTextLayout.Build(Canvas: TCanvas; const Text: string; const Area: TRect; Vertical: Boolean);
+procedure TComicTextLayout.ApplySpacing(CharacterSpacing,LineSpacing: Double; Vertical: Boolean);
+var Origin: TPoint; Cell: TComicTextCell; Stop: TComicCaretStop; I,K,DX,DY: Integer;
+  function Map(const P: TPoint): TPoint;
+  begin
+    if Vertical then Result:=Point(Origin.X+Round((P.X-Origin.X)*LineSpacing),
+      Origin.Y+Round((P.Y-Origin.Y)*CharacterSpacing))
+    else Result:=Point(Origin.X+Round((P.X-Origin.X)*CharacterSpacing),
+      Origin.Y+Round((P.Y-Origin.Y)*LineSpacing));
+  end;
+begin
+  if Stops.Count=0 then Exit; Origin:=Stops[0].Point;
+  // 折返しと字形寸法を保ち、文字の始点と列・行の間隔だけを変更する。
+  for I:=0 to Stops.Count-1 do begin Stop:=Stops[I]; Stop.Point:=Map(Stop.Point); Stops[I]:=Stop; end;
+  K:=0;
+  for I:=0 to Cells.Count-1 do begin
+    Cell:=Cells[I]; DX:=Map(Cell.Bounds.TopLeft).X-Cell.Bounds.Left; DY:=Map(Cell.Bounds.TopLeft).Y-Cell.Bounds.Top;
+    Cell.Bounds.Offset(DX,DY); Cells[I]:=Cell;
+    if Cell.TateChuYoko then begin
+      // 縦中横の2桁内の挿入位置は、文字間隔で字形の外へ離さない。
+      while (K<Stops.Count) and (Stops[K].Index<Cell.Index+1) do Inc(K);
+      if (K<Stops.Count) and (Stops[K].Index=Cell.Index+1) and (Stops[K].Line=Cell.Line) then begin
+        Stop:=Stops[K]; Stop.Point:=Point(Cell.Bounds.Left,Cell.Bounds.Top+Step div 2); Stops[K]:=Stop;
+      end;
+    end;
+  end;
+end;
+
+procedure TComicTextLayout.Build(Canvas: TCanvas; const Text: string; const Area: TRect; Vertical,AutoWrap: Boolean);
 {$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
 var At,Count,X,Y,W,Line,NextCount,NextW: Integer; Cell: TComicTextCell; Stop: TComicCaretStop; Value,Next: string;
   procedure AddStop(Index: Integer);
@@ -138,7 +167,7 @@ begin
         NextCount:=ComicTextUnitLength(Text,At+Count+1); Next:=Copy(Text,At+Count+1,NextCount);
         if not CharInSet(Next[1],[#13,#10]) then if Vertical then NextW:=Step else NextW:=Canvas.TextWidth(Next);
       end;
-      if ((not Vertical and (X>Area.Left) and (X+W+NextW>Area.Right)) or
+      if AutoWrap and ((not Vertical and (X>Area.Left) and (X+W+NextW>Area.Right)) or
         (Vertical and (Y>Area.Top) and (Y+Step+NextW>Area.Bottom))) and not Closing(Value) then begin NextLine; AddStop(At); end;
       Cell.Index:=At; Cell.Count:=Count; Cell.Line:=Line; Cell.Rotate:=Vertical and Sideways(Value);
       Cell.Bounds:=Rect(X,Y,X+W,Y+Step); Cells.Add(Cell);
@@ -165,6 +194,16 @@ begin
     if Vertical then Position:=Stop.Point.Y else Position:=Stop.Point.X;
     Distance:=Abs(Position-Along); if Distance<Best then begin Best:=Distance; Result:=Stop; end;
   end;
+end;
+
+function TComicTextLayout.LineEdge(Line: Integer; Last: Boolean): TComicCaretStop;
+var Stop: TComicCaretStop; Found: Boolean;
+begin
+  Result:=Default(TComicCaretStop); Found:=False;
+  // ページ中央を原点とした負座標でも、Home/Endは文字列内の行端を選ぶ。
+  for Stop in Stops do if Stop.Line=Line then
+    if not Found or (Last and (Stop.Index>Result.Index)) or
+      (not Last and (Stop.Index<Result.Index)) then begin Result:=Stop; Found:=True; end;
 end;
 
 function TComicTextLayout.HitTest(const P: TPoint; Vertical: Boolean): TComicCaretStop;

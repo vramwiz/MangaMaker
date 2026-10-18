@@ -11,7 +11,7 @@ uses Winapi.Windows, Winapi.Messages, Winapi.ShellAPI, Winapi.Imm,
   System.Hash, System.DateUtils, Vcl.Controls, Vcl.Forms,
   Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.ComCtrls, Vcl.Menus,
   Vcl.Dialogs, Vcl.Graphics, Vcl.Imaging.pngimage, ComicModel,
-  ComicGenerationPresets, ComicAssetEditing, ComicImageAdoption;
+  ComicGenerationPresets, ComicAssetEditing, ComicImageAdoption, ComicScriptGeneration, ComicWorkspaceGeneration;
 type
   TComicWorkspaceBridgeHelper = class helper for TMainForm
     procedure HandleWorkspaceBridge(const Request: string; out Reply: string);
@@ -20,7 +20,7 @@ procedure TComicWorkspaceBridgeHelper.HandleWorkspaceBridge(const Request: strin
 var Value: TJSONValue; Input,Output,Data,Info: TJSONObject; Items: TJSONArray;
   Action,Scope,ID,ParentID,Root,Path,Relative,Before,OldFile,RequestID,Mode,SourceID,RefID: string;
   Assets: TObjectList<TComicAsset>; Asset,Parent,Created,Source,Ref,RefProbe: TComicAsset; Preset: TComicGenerationPreset;
-  ParsedRefs: TArray<string>; RefData,RefParent: TJSONObject;
+  ParsedRefs,GenerationRefs: TArray<string>; RefData,RefParent: TJSONObject;
   Characters,Mutating,Generated,AlreadyAdopted: Boolean; ManagedLock: TFileStream; Pair: TJSONPair; Keys: TDictionary<string,Boolean>; WriteTarget: TWinControl;
   function Text(const Name: string; Required: Boolean=False; Limit: Integer=65536): string;
   var Item: TJSONValue;
@@ -106,8 +106,8 @@ begin
       if JNum(Input,'version',0)<>1 then raise Exception.Create('version:1を指定してください。');
       RequestID:=Text('requestId',False,128); if RequestID<>'' then Output.AddPair('requestId',RequestID);
       Action:=Text('action',True,40); Data:=TJSONObject.Create; Output.AddPair('data',Data);
-      Mutating:=(Action='create_asset') or (Action='register_image');
-      if Mutating and (FDragging or FFirst or (FGeometryPoints.Count>0) or (FSplitStage>0)) then raise Exception.Create('編集操作の確定または取消後に登録してください。');
+      Mutating:=(Action='create_asset') or (Action='register_image') or (Action='start_script_generation') or (Action='cancel_generation');
+      if Mutating and (InlineTextActive or FDragging or FFirst or (FGeometryPoints.Count>0) or (FSplitStage>0)) then raise Exception.Create('編集操作の確定または取消後に登録してください。');
       WriteTarget:=Self; if FAssetManager<>nil then WriteTarget:=FAssetManager;
       // 標準ダイアログはActiveCustomFormに現れないため、所有ウィンドウの無効化も書込拒否の境界に使う。
       if Mutating and WriteTarget.HandleAllocated and not IsWindowEnabled(WriteTarget.Handle) then
@@ -123,6 +123,7 @@ begin
           if Page<>nil then begin Pair:=Info.RemovePair('pageId'); Pair.Free; Info.AddPair('pageId',Page.ID); end;
           Info.AddPair('generationPresetId',FProject.GenerationPresetID); Info.AddPair('generationPresetName',FProject.GenerationPresetName);
           Info.AddPair('generationInstructions',FProject.GenerationInstructions);
+          Info.AddPair('scriptLoaded',TJSONBool.Create(FProject.ScriptSource<>''));
         end;
         if (FAssetManager<>nil) and (FAssetManager.CurrentAsset<>nil) then begin
           Characters:=FAssetManager.IsCharacters;
@@ -133,6 +134,28 @@ begin
           Characters:=False; Root:=FProject.Folder; Info:=AssetData(TComicAsset(FImages.Items.Objects[FImages.ItemIndex]));
           Info.AddPair('library','images'); Data.AddPair('selection',Info);
         end;
+      end else if Action='read_script' then begin
+        RequireProject; Data.AddPair('source',FProject.ScriptSource);
+        Data.AddPair('plan',ScriptGenerationPlan(FProject,FCharacters));
+        Data.AddPair('sequenceActive',TJSONBool.Create(FScriptGenerationProject<>''));
+        Data.AddPair('generatedCount',TJSONNumber.Create(FScriptGenerationCount));
+        if FGenerationActive<>nil then begin
+          Data.AddPair('activeAssetId',FGenerationActive.AssetID); Data.AddPair('stage',FGenerationActive.Worker.Stage);
+        end;
+        if (FAssetManager<>nil) and (FAssetManager.GenerationStatus<>nil) then Data.AddPair('status',FAssetManager.GenerationStatus.Caption);
+      end else if Action='generation_context' then begin
+        RequireProject; ID:=Text('assetId',True,200);
+        Path:=GenerationSnapshot('images',FProject.ID,ID,GenerationRefs);
+        Data.AddPair('fingerprint',Path); Data.AddPair('context',TJSONObject.ParseJSONValue(Path));
+      end else if Action='start_script_generation' then begin
+        RequireProject;
+        if (FAssetManager=nil) or FAssetManager.IsCharacters then raise Exception.Create('画像管理を開いてから開始してください。');
+        if (Input.GetValue('limit')<>nil) and not (Input.GetValue('limit') is TJSONNumber) then raise Exception.Create('limitは整数で指定してください。');
+        if (JNum(Input,'limit',0)<0) or (JNum(Input,'limit',0)>10000) or (Frac(JNum(Input,'limit',0))<>0) then raise Exception.Create('limitは0〜10000の整数で指定してください。');
+        RunWorkspaceStartScriptGeneration(Self,FAssetManager,Round(JNum(Input,'limit',0)));
+        Data.AddPair('started',TJSONBool.Create(FGenerationActive<>nil)); Data.AddPair('status',FAssetManager.GenerationStatus.Caption);
+      end else if Action='cancel_generation' then begin
+        RequireProject; CancelGeneration(nil); Data.AddPair('cancelled',TJSONBool.Create(True));
       end else if Action='list_presets' then begin
         Items:=TJSONArray.Create; Data.AddPair('presets',Items); for Preset in FGenerationPresets do Items.AddElement(Preset.Json);
         Data.AddPair('writable',TJSONBool.Create(FGenerationWritable));
@@ -197,6 +220,11 @@ begin
         end;
         if not AlreadyAdopted and (Input.GetValue('expectedFileName')<>nil) and (Text('expectedFileName',False,1024)<>Asset.FileName) then
           raise Exception.Create('対象画像が更新されています。状態を取得し直してください。');
+        if not Characters and (Input.GetValue('expectedContext')<>nil) then begin
+          if FAssetManager<>nil then FAssetManager.FlushDraft;
+          if Text('expectedContext',True,131072)<>GenerationSnapshot('images',FProject.ID,Asset.ID,GenerationRefs) then
+            raise Exception.Create('生成条件または参照画像が変わりました。状態を取得し直してください。');
+        end;
         Path:=Text('sourcePath',True,4096); RequireLocalImagePath(Path); Path:=TPath.GetFullPath(Path);
         if not AlreadyAdopted then begin
           if FAssetManager<>nil then FAssetManager.FlushDraft;

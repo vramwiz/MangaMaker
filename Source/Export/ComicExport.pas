@@ -27,7 +27,7 @@ begin
   try
     Pair:=J.RemovePair('revision'); Pair.Free;
     Pair:=J.RemovePair('outputRevision'); Pair.Free;
-    Text:='renderer-12|'+IntToStr(Project.Width)+'x'+IntToStr(Project.Height)+'|'+J.ToJSON;
+    Text:='renderer-16|'+IntToStr(Project.Width)+'x'+IntToStr(Project.Height)+'|'+J.ToJSON;
     for P in Page.Panels do begin
       if P.ImageID<>'' then AddImage(P.ImageID,Project.ImagePath(P.ImageID));
       for Overlay in P.Overlays do begin

@@ -51,10 +51,10 @@ procedure TComicAssetsTestsHelper.SafetyChecks;
       AtomicWrite(LibraryPath,ValidText); ReadAssets(Assets,LibraryPath);
       Check((Assets.Count=2) and (Assets[1].Name=FCharacters[0].Name),'repaired character library loads completely on retry');
 
-      P:=TComicProject.Create; P.Initialize('切替元 fixture','1'); Probe.AdoptProject(P,False);
+      P:=CreateFixtureProject; P.Initialize('切替元 fixture','1'); Probe.AdoptProject(P,False);
       Probe.FGeometryPoints.Add(TPointF.Create(120,130)); Probe.FTool:=8; Probe.FFirst:=True;
       Probe.FSplitStage:=2; Probe.FSplitPanelID:='previous-panel'; Probe.FPageDropIndex:=3;
-      P:=TComicProject.Create; P.Initialize('切替先 fixture','2'); State:=P.Snapshot;
+      P:=CreateFixtureProject; P.Initialize('切替先 fixture','2'); State:=P.Snapshot;
       Probe.AdoptProject(P,False);
       Check((Probe.FGeometryPoints.Count=0) and (Probe.FSplitStage=0) and (Probe.FSplitPanelID='') and
         not Probe.FFirst and (Probe.FTool=0) and (Probe.FPageDropIndex=-1),
@@ -63,7 +63,7 @@ procedure TComicAssetsTestsHelper.SafetyChecks;
         'project adoption preserves new project content and starts clean history');
       Probe.FDragging:=True; Probe.FDragMoved:=True; Probe.FDragSnapshot:=Probe.FProject.Snapshot;
       Probe.FProject.Title:='temporary drag mutation'; Probe.FDragVertex:=1;
-      P:=TComicProject.Create; P.Folder:=Probe.FProject.Folder; P.Restore(Probe.FDragSnapshot); State:=P.Snapshot;
+      P:=CreateFixtureProject; P.Folder:=Probe.FProject.Folder; P.Restore(Probe.FDragSnapshot); State:=P.Snapshot;
       Probe.AdoptProject(P,True);
       Check(not Probe.FDragging and not Probe.FDragMoved and (Probe.FDragVertex=-1) and
         (Probe.FDragSnapshot='') and (Probe.FProject.Snapshot=State) and Probe.FDirty,
@@ -180,7 +180,7 @@ procedure TComicAssetsTestsHelper.SceneGenerationChecks;
   begin
     Original:=FProject.Snapshot; Probe:=TComicTestForm.Create(nil); PNG:=TPngImage.Create; Manager:=nil; Selector:=nil; Request:=nil; Response:=nil;
     try
-      Project:=TComicProject.Create; Project.Initialize('場面とタイトル fixture','第2話'); Probe.AdoptProject(Project,False);
+      Project:=CreateFixtureProject; Project.Initialize('場面とタイトル fixture','第2話'); Probe.AdoptProject(Project,False);
       Parent:=Project.ImportImage(TPath.Combine(TestFolder,'reference.bmp'),''); ParentID:=Parent.ID;
       CharacterID:=Probe.FCharacters[0].ID; Before:=Project.Snapshot; History:=Probe.FUndo.Count;
       Manager:=TAssetDialog.CreateManager(Probe,Project.Assets,Project,False,True,Probe.GenerationPresets,Probe.FCharacters); Probe.FAssetManager:=Manager;
@@ -239,9 +239,9 @@ procedure TComicAssetsTestsHelper.SceneGenerationChecks;
         B.SetSize(Manager.ClientWidth,Manager.ClientHeight); Manager.PaintTo(B.Canvas,0,0); PNG.Assign(B);
         PNG.SaveToFile(TPath.Combine(TestFolder,'scene-generation-'+IntToStr(PPI)+'.png'));
       end;
-      CanClose:=True; Manager.OnCloseQuery(Manager,CanClose); Probe.FAssetManager:=nil; FreeAndNil(Manager); Probe.FinishImageManagement(Before);
+      CanClose:=True; Manager.OnCloseQuery(Manager,CanClose); Probe.FAssetManager:=nil; FreeAndNil(Manager); Probe.FinishImageManagement(Before,True);
       After:=Project.Snapshot; Check(Probe.FUndo.Count=History+1,'image manager changes pipe adoption and generation snapshot commit as one undo');
-      Project.Save; Reloaded:=TComicProject.Create;
+      Project.Save; Reloaded:=CreateFixtureProject;
       try Reloaded.Load(TPath.Combine(Project.Folder,'Project.json')); Check(Reloaded.Snapshot=After,'scene sources title metadata selected references and generation conditions save and reload');
       finally Reloaded.Free; end;
       Probe.Undo(nil); Check(Project.Snapshot=Before,'image manager undo removes all newly added derivations and conditions');

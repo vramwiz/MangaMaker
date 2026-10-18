@@ -52,7 +52,7 @@
         <DCC_DcuOutput>Win64\$(Config)</DCC_DcuOutput>
         <DCC_ExeOutput>.</DCC_ExeOutput>
         <DCC_UsePackage>vcl;rtl;vclx;$(DCC_UsePackage)</DCC_UsePackage>
-        <DCC_UnitSearchPath>Source\Shell;Source\Workspace;Source\Model;Source\Rendering;Source\Editing;Source\Text;Source\Dialogs;Source\Integration;Source\Export;Source\Diagnostics;Source\Controls;Source\Materials;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_UnitSearchPath>Source\Shell;Source\Workspace;Source\Model;Source\Model\Script;Source\Rendering;Source\Editing;Source\Text;Source\Dialogs;Source\Integration;Source\Export;Source\Diagnostics;Source\Controls;Source\Materials;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
         <SanitizedProjectName>MangaMaker</SanitizedProjectName>
         <VerInfo_Locale>1041</VerInfo_Locale>
         <VerInfo_Keys>CompanyName=;FileDescription=MangaMaker;FileVersion=1.0.0.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProductName=MangaMaker;ProductVersion=1.0.0.0;Comments=</VerInfo_Keys>
@@ -89,7 +89,7 @@
     </PropertyGroup>
     <PropertyGroup Condition="'$(MangaMakerSelfTest)'=='true'">
         <DCC_Define>MANGAMAKER_SELFTEST;$(DCC_Define)</DCC_Define>
-        <DCC_UnitSearchPath>Source\Tests\Support;Source\Tests\Editor;Source\Tests\Management;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+        <DCC_UnitSearchPath>Source\Tests\Support;Source\Tests\Editor;Source\Tests\Management;Source\Tests\Interaction;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
     </PropertyGroup>
     <ItemGroup>
         <DelphiCompile Include="$(MainSource)">

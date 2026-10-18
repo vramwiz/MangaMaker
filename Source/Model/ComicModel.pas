@@ -7,6 +7,8 @@ interface
 uses Winapi.Windows, System.SysUtils, System.Classes, System.Types, System.UITypes, System.JSON,
   System.Generics.Collections, System.IOUtils, System.Math, ComicGeometry;
 
+const DefaultPageWidth=650; DefaultPageHeight=975;
+
 type
   TComicPageBasis = record
     Width,Height,Left,Top,Right,Bottom: Integer;
@@ -27,6 +29,7 @@ type
   TComicOverlay = class
     ID,MaterialID,FileName: string;
     Bounds: TRectF;
+    Rotation: Double;
     constructor Create;
     function Json: TJSONObject;
     procedure Read(J: TJSONObject);
@@ -38,7 +41,7 @@ type
     Vertices: TArray<TPointF>;
     Zoom, PanX, PanY: Double;
     FilterKind,FilterStrength,FrameKind: Integer;
-    BorderWidth: Double;
+    BorderWidth,FrameGap: Double;
     BorderColor: TColor;
     Overlays: TObjectList<TComicOverlay>;
     constructor Create;
@@ -72,6 +75,7 @@ type
     TextOffset: TPointF;
     TextLayoutSize: TSizeF;
     TextLayoutFontSize: Integer;
+    CharacterSpacing,LineSpacing: Double;
     Tails: TArray<TComicTailState>;
   end;
   TComicBalloonContour = (bcPlain,bcJagged,bcWave,bcCloud);
@@ -97,7 +101,8 @@ type
     TextOffset: TPointF;
     TextLayoutSize: TSizeF;
     TextLayoutFontSize: Integer;
-    Vertical, Transparent, Overflow: Boolean;
+    CharacterSpacing,LineSpacing: Double;
+    Vertical, Transparent, Overflow, AutoWrap: Boolean;
     Tails: TObjectList<TComicTail>;
     property HasTail: Boolean read GetHasTail write SetHasTail;
     property TailX: Double read GetTailX write SetTailX;
@@ -108,7 +113,7 @@ type
     procedure Read(J: TJSONObject);
     function CaptureTransform: TComicBalloonTransform;
     procedure ResetTextLayout;
-    function ApplyTransform(const Source: TComicBalloonTransform; const Target: TRectF): Boolean;
+    function ApplyTransform(const Source: TComicBalloonTransform; const Target: TRectF; ScaleText: Boolean=True): Boolean;
   end;
   TComicPage = class
     ID: string;
@@ -123,6 +128,7 @@ type
   TComicProject = class
     ID, Title, Episode, Folder: string;
     GenerationPresetID,GenerationPresetName,GenerationInstructions: string;
+    ScriptSource,ScriptProgress: string;
     Width, Height, ExportCount: Integer;
     MarginLeft,MarginTop,MarginRight,MarginBottom: Integer;
     Assets: TObjectList<TComicAsset>;
@@ -283,10 +289,13 @@ end;
 constructor TComicOverlay.Create;
 begin inherited; ID:=NewUID; Bounds:=TRectF.Create(0,0,1,1); end;
 function TComicOverlay.Json: TJSONObject;
-begin Result:=TJSONObject.Create; Result.AddPair('id',ID); Result.AddPair('materialId',MaterialID); Result.AddPair('file',FileName); PutRect(Result,Bounds); end;
+begin Result:=TJSONObject.Create; Result.AddPair('id',ID); Result.AddPair('materialId',MaterialID); Result.AddPair('file',FileName);
+  PutRect(Result,Bounds); Put(Result,'rotation',Rotation); end;
 procedure TComicOverlay.Read(J: TJSONObject);
 begin
   ID:=JStr(J,'id',ID); MaterialID:=JStr(J,'materialId',''); FileName:=JStr(J,'file',''); Bounds:=ReadRect(J);
+  Rotation:=JNum(J,'rotation',0);
+  if IsNan(Rotation) or IsInfinite(Rotation) or (Abs(Rotation)>360) then raise Exception.Create('効果素材の回転角度が不正です。');
   if (ID='') or (Length(ID)>200) or (MaterialID='') or (Length(MaterialID)>200) or
     IsNan(Bounds.Left) or IsNan(Bounds.Top) or IsNan(Bounds.Width) or IsNan(Bounds.Height) or
     IsInfinite(Bounds.Left) or IsInfinite(Bounds.Top) or IsInfinite(Bounds.Width) or IsInfinite(Bounds.Height) or
@@ -295,7 +304,7 @@ begin
 end;
 constructor TComicPanel.Create;
 begin inherited; ID:=NewUID; Zoom:=1; Number:=1; Bounds:=TRectF.Create(80,80,1120,1620);
-  Overlays:=TObjectList<TComicOverlay>.Create; BorderWidth:=4; FilterStrength:=100; end;
+  Overlays:=TObjectList<TComicOverlay>.Create; BorderWidth:=4; FrameGap:=8; FilterStrength:=100; end;
 destructor TComicPanel.Destroy;
 begin Overlays.Free; inherited; end;
 function TComicPanel.Json: TJSONObject;
@@ -305,7 +314,7 @@ begin
   PutRect(Result,Bounds); Put(Result,'shape',Shape); Put(Result,'number',Number);
   Put(Result,'zoom',Zoom); Put(Result,'panX',PanX); Put(Result,'panY',PanY);
   Put(Result,'filterKind',FilterKind); Put(Result,'filterStrength',FilterStrength); Put(Result,'frameKind',FrameKind);
-  Put(Result,'borderWidth',BorderWidth); Put(Result,'borderColor',BorderColor);
+  Put(Result,'borderWidth',BorderWidth); Put(Result,'borderColor',BorderColor); Put(Result,'frameGap',FrameGap);
   Items:=TJSONArray.Create; Result.AddPair('overlays',Items); for Overlay in Overlays do Items.AddElement(Overlay.Json);
   if Shape=3 then Result.AddPair('vertices',PointsJson(Vertices));
 end;
@@ -317,6 +326,8 @@ begin
   Zoom:=JNum(J,'zoom',1); PanX:=JNum(J,'panX',0); PanY:=JNum(J,'panY',0);
   FilterKind:=Round(JNum(J,'filterKind',0)); FilterStrength:=Round(JNum(J,'filterStrength',100)); FrameKind:=Round(JNum(J,'frameKind',0));
   BorderWidth:=JNum(J,'borderWidth',4); BorderColor:=Round(JNum(J,'borderColor',0));
+  FrameGap:=JNum(J,'frameGap',8);
+  if IsNan(FrameGap) or IsInfinite(FrameGap) or (FrameGap<0) or (FrameGap>8000) then raise Exception.Create('二重枠の間隔が不正です。');
   if not (FilterKind in [0..4]) or not (FilterStrength in [0..100]) or not (FrameKind in [0..2]) or
     IsNan(BorderWidth) or IsInfinite(BorderWidth) or (BorderWidth<0) or (BorderWidth>100) then raise Exception.Create('コマの効果設定が不正です。');
   Overlays.Clear; Value:=J.GetValue('overlays');
@@ -363,7 +374,8 @@ function TComicPanel.CanSplit: Boolean;
 begin Result:=(Shape in [0,3]) and ConvexPolygon(Outline); end;
 constructor TComicBalloon.Create;
 begin
-  inherited; ID:=NewUID; Text:='セリフ'; FontSize:=40; FontFamily:='Yu Gothic'; FontColor:=0; Shape:=1; Overflow:=True;
+  inherited; ID:=NewUID; Text:=''; Vertical:=True; FontSize:=24; FontFamily:='Yu Gothic'; FontColor:=0; Shape:=1; Overflow:=True;
+  CharacterSpacing:=1; LineSpacing:=1; AutoWrap:=False;
   Tails:=TObjectList<TComicTail>.Create;
   BorderColor:=0; FillColor:=$FFFFFF; BorderWidth:=3;
   Bounds:=TRectF.Create(100,100,350,420);
@@ -430,6 +442,8 @@ begin
   Put(Result,'textOffsetX',TextOffset.X); Put(Result,'textOffsetY',TextOffset.Y);
   Put(Result,'textLayoutWidth',TextLayoutSize.cx); Put(Result,'textLayoutHeight',TextLayoutSize.cy);
   Put(Result,'textLayoutFontSize',TextLayoutFontSize);
+  Put(Result,'characterSpacing',CharacterSpacing); Put(Result,'lineSpacing',LineSpacing);
+  Put(Result,'autoWrap',AutoWrap);
   Put(Result,'transparent',Transparent); Put(Result,'overflow',Overflow);
   Put(Result,'hasTail',HasTail); Put(Result,'tailX',TailX); Put(Result,'tailY',TailY);
   A:=TJSONArray.Create; Result.AddPair('tails',A); for Tail in Tails do A.AddElement(Tail.Json);
@@ -459,6 +473,12 @@ begin
   TextOffset:=TPointF.Create(JNum(J,'textOffsetX',0),JNum(J,'textOffsetY',0));
   TextLayoutSize:=TSizeF.Create(JNum(J,'textLayoutWidth',0),JNum(J,'textLayoutHeight',0));
   TextLayoutFontSize:=Round(JNum(J,'textLayoutFontSize',0));
+  CharacterSpacing:=JNum(J,'characterSpacing',1); LineSpacing:=JNum(J,'lineSpacing',1);
+  // 旧作品の自動折返しは保持し、新規作成と直接入力だけを手動改行へ移行する。
+  AutoWrap:=Flag(J,'autoWrap',True);
+  if IsNan(CharacterSpacing) or IsInfinite(CharacterSpacing) or (CharacterSpacing<0.25) or (CharacterSpacing>8) or
+    IsNan(LineSpacing) or IsInfinite(LineSpacing) or (LineSpacing<0.25) or (LineSpacing>8) then
+    raise Exception.Create('セリフの文字間隔・行間隔が不正です。');
   if IsNan(TextLayoutSize.cx) or IsInfinite(TextLayoutSize.cx) or IsNan(TextLayoutSize.cy) or IsInfinite(TextLayoutSize.cy) or
     not (((TextLayoutFontSize=0) and (TextLayoutSize.cx=0) and (TextLayoutSize.cy=0)) or
       ((TextLayoutFontSize>=1) and (TextLayoutFontSize<=1000) and (TextLayoutSize.cx>=1) and (TextLayoutSize.cx<=160000) and
@@ -489,11 +509,12 @@ var I: Integer;
 begin
   Result.Bounds:=Bounds; Result.FontSize:=FontSize; Result.TextOffset:=TextOffset;
   Result.TextLayoutSize:=TextLayoutSize; Result.TextLayoutFontSize:=TextLayoutFontSize; SetLength(Result.Tails,Tails.Count);
+  Result.CharacterSpacing:=CharacterSpacing; Result.LineSpacing:=LineSpacing;
   for I:=0 to Tails.Count-1 do begin Result.Tails[I].Root:=Tails[I].Root; Result.Tails[I].Tip:=Tails[I].Tip; Result.Tails[I].Width:=Tails[I].Width; end;
 end;
 procedure TComicBalloon.ResetTextLayout;
 begin TextLayoutSize:=TSizeF.Create(0,0); TextLayoutFontSize:=0; end;
-function TComicBalloon.ApplyTransform(const Source: TComicBalloonTransform; const Target: TRectF): Boolean;
+function TComicBalloon.ApplyTransform(const Source: TComicBalloonTransform; const Target: TRectF; ScaleText: Boolean): Boolean;
 var I: Integer; SX,SY: Double; Prepared: TArray<TComicTailState>; Probe: TComicTail; Offset: TPointF;
   function Map(const P: TPointF): TPointF;
   begin Result:=TPointF.Create(Target.Left+(P.X-Source.Bounds.Left)*SX,Target.Top+(P.Y-Source.Bounds.Top)*SY); end;
@@ -514,9 +535,12 @@ begin
       Probe.Root:=Prepared[I].Root; Probe.Tip:=Prepared[I].Tip; Probe.Width:=Prepared[I].Width; if not Probe.Valid then Exit;
     end;
     for I:=0 to Tails.Count-1 do begin Tails[I].Root:=Prepared[I].Root; Tails[I].Tip:=Prepared[I].Tip; Tails[I].Width:=Prepared[I].Width; end;
-    Bounds:=Target; FontSize:=EnsureRange(Round(Source.FontSize*Min(SX,SY)),1,1000);
+    Bounds:=Target; FontSize:=Source.FontSize;
+    CharacterSpacing:=Source.CharacterSpacing; LineSpacing:=Source.LineSpacing;
+    // 通常の本体リサイズは文字サイズを保持する。Ctrl指定時だけ従来の文字込み拡縮を行う。
+    if ScaleText then FontSize:=EnsureRange(Round(Source.FontSize*Min(SX,SY)),1,1000);
     TextLayoutSize:=Source.TextLayoutSize; TextLayoutFontSize:=Source.TextLayoutFontSize;
-    if (TextLayoutFontSize=0) and ((Abs(SX-1)>0.00001) or (Abs(SY-1)>0.00001)) then begin
+    if ScaleText and (TextLayoutFontSize=0) and ((Abs(SX-1)>0.00001) or (Abs(SY-1)>0.00001)) then begin
       TextLayoutSize:=TSizeF.Create(Max(1,Round(Source.Bounds.Right)-Round(Source.Bounds.Left)-36),Max(1,Round(Source.Bounds.Bottom)-Round(Source.Bounds.Top)-36));
       TextLayoutFontSize:=Source.FontSize;
     end;
@@ -552,7 +576,7 @@ begin
 end;
 constructor TComicProject.Create;
 begin
-  inherited; Width:=1200; Height:=1700; MarginLeft:=60; MarginTop:=60; MarginRight:=60; MarginBottom:=60;
+  inherited; Width:=DefaultPageWidth; Height:=DefaultPageHeight; MarginLeft:=60; MarginTop:=60; MarginRight:=60; MarginBottom:=60;
   Assets:=TObjectList<TComicAsset>.Create; Pages:=TObjectList<TComicPage>.Create;
 end;
 destructor TComicProject.Destroy;
@@ -565,6 +589,7 @@ begin
   Result.AddPair('title',Title); Result.AddPair('episode',Episode);
   Result.AddPair('generationPresetId',GenerationPresetID); Result.AddPair('generationPresetName',GenerationPresetName);
   Result.AddPair('generationInstructions',GenerationInstructions);
+  Result.AddPair('scriptSource',ScriptSource); Result.AddPair('scriptProgress',ScriptProgress);
   Put(Result,'width',Width); Put(Result,'height',Height); Put(Result,'exportCount',ExportCount);
   Put(Result,'marginLeft',MarginLeft); Put(Result,'marginTop',MarginTop);
   Put(Result,'marginRight',MarginRight); Put(Result,'marginBottom',MarginBottom);
@@ -590,6 +615,8 @@ begin
     ID:=JStr(J,'id',''); Title:=JStr(J,'title',''); Episode:=JStr(J,'episode','');
     GenerationPresetID:=JStr(J,'generationPresetId',''); GenerationPresetName:=JStr(J,'generationPresetName','');
     GenerationInstructions:=JStr(J,'generationInstructions','');
+    ScriptSource:=JStr(J,'scriptSource',''); ScriptProgress:=JStr(J,'scriptProgress','');
+    if (Length(ScriptSource)>1024*1024) or (Length(ScriptProgress)>4*1024*1024) then raise Exception.Create('台本または進行記録が長すぎます。');
     if (Length(GenerationPresetName)>200) or (Length(GenerationInstructions)>65536) then raise Exception.Create('作品の生成指示が不正です。');
     Width:=Round(JNum(J,'width',1200)); Height:=Round(JNum(J,'height',1700));
     if (Width<100) or (Width>8000) or (Height<100) or (Height>8000) then raise Exception.Create('出力解像度が不正です。');

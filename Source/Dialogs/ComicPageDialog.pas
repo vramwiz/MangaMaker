@@ -69,7 +69,7 @@ begin
   AddButton('登録',314,334,96,RegisterClick,FWritable); AddButton('名前変更',422,334,96,RenameClick,FWritable); AddButton('削除',530,334,96,RemoveClick,FWritable);
   FStatus:=TLabel.Create(Self); FStatus.Parent:=Self; FStatus.AutoSize:=False; FStatus.WordWrap:=True;
   FStatus.SetBounds(D(20),D(386),D(610),D(64));
-  FStatus.Caption:='全ページの出力寸法と外枠を変更します。配置済みのコマ・画像・文字の座標は維持します。適用後はUndoで戻せます。';
+  FStatus.Caption:='解像度変更時は全ページの配置をページ中心から縦横同率で拡縮します。文字は近い整数サイズへ調整し、余白だけの変更では配置を維持します。Undoで戻せます。';
   if not FWritable then FStatus.Caption:='共通ライブラリの読込に失敗しています。プリセットの保存は停止中です。作品のページ基準は変更できます。';
   Bar:=TPanel.Create(Self); Bar.Parent:=Self; Bar.Align:=alBottom; Bar.Height:=D(54); Bar.BevelOuter:=bvNone;
   Button:=TButton.Create(Self); Button.Parent:=Bar; Button.SetBounds(D(360),D(10),D(128),D(34)); Button.Caption:='作品に適用'; Button.OnClick:=Accept; Button.Default:=True;
@@ -82,10 +82,14 @@ begin
   FList.Clear; for Preset in FPresets do FList.Items.AddObject(Preset.Name,Preset);
 end;
 procedure TComicPageDialog.SetDraftBasis(const Basis: TComicPageBasis);
+var I: Integer;
 begin
   FFields[0].Text:=IntToStr(Basis.Width); FFields[1].Text:=IntToStr(Basis.Height);
   FFields[2].Text:=IntToStr(Basis.Left); FFields[3].Text:=IntToStr(Basis.Top);
   FFields[4].Text:=IntToStr(Basis.Right); FFields[5].Text:=IntToStr(Basis.Bottom);
+  // 既存作品の値を維持したまま、同じ寸法・余白のプリセットを初期表示する。
+  FList.ItemIndex:=-1;
+  for I:=0 to FPresets.Count-1 do if FPresets[I].Basis.Same(Basis) then begin FList.ItemIndex:=I; Break; end;
 end;
 function TComicPageDialog.ReadFields: TComicPageBasis;
 var Values: array[0..5] of Integer; I: Integer;
@@ -98,7 +102,7 @@ end;
 procedure TComicPageDialog.SelectPreset(Index: Integer);
 begin
   if (Index<0) or (Index>=FPresets.Count) then Exit;
-  FList.ItemIndex:=Index; SetDraftBasis(FPresets[Index].Basis); FName.Text:=FPresets[Index].Name;
+  SetDraftBasis(FPresets[Index].Basis); FList.ItemIndex:=Index; FName.Text:=FPresets[Index].Name;
 end;
 procedure TComicPageDialog.PresetChanged(Sender: TObject);
 begin SelectPreset(FList.ItemIndex); end;
