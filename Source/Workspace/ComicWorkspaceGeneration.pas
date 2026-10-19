@@ -94,6 +94,7 @@ begin
   end;
   // 既存の入力ダイアログが閉じるまで次の生成を開始しない。
   if FAssetManager.HandleAllocated and not IsWindowEnabled(FAssetManager.Handle) then Exit;
+  if (FImageWorkspace<>nil) and HandleAllocated and not IsWindowEnabled(Handle) then Exit;
   if not FTesting and (Screen.ActiveCustomForm<>nil) and (Screen.ActiveCustomForm<>Self) and (Screen.ActiveCustomForm<>FAssetManager) then Exit;
   try
     FAssetManager.FlushDraft; Plan:=ScriptGenerationPlan(FProject,FCharacters);
@@ -209,7 +210,8 @@ begin
     end;
     if Job=FGenerationActive then begin
       if Job.Worker.Success and not Job.Adopted and (FAssetManager<>nil) and (FAssetManager.GenerationSessionID=Job.DialogID) and
-        ((FAssetManager.HandleAllocated and not IsWindowEnabled(FAssetManager.Handle)) or
+        (((FImageWorkspace<>nil) and HandleAllocated and not IsWindowEnabled(Handle)) or
+         (FAssetManager.HandleAllocated and not IsWindowEnabled(FAssetManager.Handle)) or
          (not FTesting and (Screen.ActiveCustomForm<>nil) and (Screen.ActiveCustomForm<>Self) and (Screen.ActiveCustomForm<>FAssetManager))) then begin
         FAssetManager.SetGenerationBusy(True,'生成画像を受信済みです。開いているダイアログを閉じると登録します。');
         Continue;

@@ -26,16 +26,18 @@ type
   end;
 
 implementation
+uses ComicDpi;
 
 constructor TComicCharacterRefDialog.CreateSelector(AOwner: TComponent; Characters: TObjectList<TComicAsset>; const Selected: TArray<string>);
 var Item: TComicAsset; Ref,LabelText: string; LabelControl: TLabel;
+  function D(Value: Integer): Integer; begin Result:=MulDiv(Value,CurrentPPI,96); end;
 begin
-  inherited CreateNew(AOwner); FIDs:=TList<string>.Create; FSelected:=Copy(Selected); Caption:='この画像で参照する人物・服装';
-  Width:=600; Height:=500; Position:=poOwnerFormCenter; Font.Name:='Yu Gothic UI'; Font.Size:=10;
-  Constraints.MinWidth:=500; Constraints.MinHeight:=350;
-  LabelControl:=TLabel.Create(Self); LabelControl.Parent:=Self; LabelControl.AutoSize:=False; LabelControl.Align:=alTop; LabelControl.Height:=48; LabelControl.WordWrap:=True;
+  inherited CreateScaledNew(AOwner,OwnerControlPPI(AOwner)); FIDs:=TList<string>.Create; FSelected:=Copy(Selected); Caption:='この画像で参照する人物・服装';
+  Width:=D(600); Height:=D(500); Position:=poOwnerFormCenter; Font.Name:='Yu Gothic UI'; Font.Size:=10;
+  Constraints.MinWidth:=D(500); Constraints.MinHeight:=D(350);
+  LabelControl:=TLabel.Create(Self); LabelControl.Parent:=Self; LabelControl.AutoSize:=False; LabelControl.Align:=alTop; LabelControl.Height:=D(48); LabelControl.WordWrap:=True;
   LabelControl.Caption:='生成に必要な人物・服装だけを選びます。0件も選択できます。人物の基本服装と別服装は個別の参照です。';
-  FBar:=TPanel.Create(Self); FBar.Parent:=Self; FBar.Align:=alBottom; FBar.Height:=52; FBar.BevelOuter:=bvNone;
+  FBar:=TPanel.Create(Self); FBar.Parent:=Self; FBar.Align:=alBottom; FBar.Height:=D(52); FBar.BevelOuter:=bvNone;
   FAccept:=TButton.Create(Self); FAccept.Parent:=FBar; FAccept.Caption:='適用'; FAccept.Default:=True; FAccept.OnClick:=Commit;
   FCancel:=TButton.Create(Self); FCancel.Parent:=FBar; FCancel.Caption:='取消'; FCancel.Cancel:=True; FCancel.ModalResult:=mrCancel;
   FBar.OnResize:=ResizeActions; OnResize:=ResizeActions; ResizeActions(nil);

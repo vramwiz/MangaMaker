@@ -306,10 +306,13 @@ var Probe: TComicTestForm; Project,Reloaded: TComicProject; Balloon: TComicBallo
     Probe.FContour.ItemIndex:=1; Probe.FContour.OnChange(Probe.FContour); Check(Balloon.Contour=bcJagged,'contour selection applies immediately');
     Base:=Project.Snapshot; Count:=Probe.FUndo.Count; Probe.BalloonSettingsChanged(Probe.FContour);
     Check((Project.Snapshot=Base) and (Probe.FUndo.Count=Count),'unchanged setting does not create an undo');
-    Probe.ActiveControl:=Probe.FText; Probe.MemoFocusChanged(nil); Base:=Project.Snapshot; Count:=Probe.FUndo.Count;
-    Probe.FText.Text:='保険'; Probe.FText.Text:='保険のメモ';
-    Check((Balloon.Text='保険のメモ') and (Probe.FUndo.Count=Count+1),'fallback memo updates live and groups a focus session into one undo');
-    Probe.ActiveControl:=Probe.FView; Probe.Undo(nil); Check(Project.Snapshot=Base,'memo undo restores text from before the focus session');
+    Probe.FText.Visible:=True;
+    try
+      Probe.ActiveControl:=Probe.FText; Probe.MemoFocusChanged(nil); Base:=Project.Snapshot; Count:=Probe.FUndo.Count;
+      Probe.FText.Text:='保険'; Probe.FText.Text:='保険のメモ';
+      Check((Balloon.Text='保険のメモ') and (Probe.FUndo.Count=Count+1),'retained memo updates live and groups a focus session into one undo');
+      Probe.ActiveControl:=Probe.FView; Probe.Undo(nil); Check(Project.Snapshot=Base,'memo undo restores text from before the focus session');
+    finally Probe.ActiveControl:=nil; Probe.FText.Visible:=False; end;
     Balloon:=Probe.Page.Balloons[0]; SelectBalloon; Probe.LoadBalloonControls(Balloon); Base:=Project.Snapshot; Count:=Probe.FUndo.Count;
     Lock:=CreateFile(PChar(TPath.Combine(Project.Folder,'Draft.json')),GENERIC_READ,0,nil,OPEN_EXISTING,0,0);
     try

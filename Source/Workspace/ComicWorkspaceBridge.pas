@@ -109,6 +109,8 @@ begin
       Mutating:=(Action='create_asset') or (Action='register_image') or (Action='start_script_generation') or (Action='cancel_generation');
       if Mutating and (InlineTextActive or FDragging or FFirst or (FGeometryPoints.Count>0) or (FSplitStage>0)) then raise Exception.Create('編集操作の確定または取消後に登録してください。');
       WriteTarget:=Self; if FAssetManager<>nil then WriteTarget:=FAssetManager;
+      if Mutating and (FImageWorkspace<>nil) and HandleAllocated and not IsWindowEnabled(Handle) then
+        raise Exception.Create('開いているダイアログを閉じてから登録してください。');
       // 標準ダイアログはActiveCustomFormに現れないため、所有ウィンドウの無効化も書込拒否の境界に使う。
       if Mutating and WriteTarget.HandleAllocated and not IsWindowEnabled(WriteTarget.Handle) then
         raise Exception.Create('開いているダイアログを閉じてから登録してください。');

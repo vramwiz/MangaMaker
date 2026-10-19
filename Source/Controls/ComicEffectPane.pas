@@ -70,18 +70,18 @@ uses System.IOUtils, System.UITypes, Vcl.Forms, Vcl.Dialogs, Winapi.Windows,
   ComicModel, ComicEffectRegistration;
 constructor TComicEffectPane.CreatePane(AOwner: TComponent; AParent: TWinControl; Store: TObjectList<TComicEffectMaterial>; Writable: Boolean; Changed: TNotifyEvent);
 var Footer,Buttons: TPanel; Title: TLabel;
-  function D(Value: Integer): Integer; begin Result:=MulDiv(Value,Screen.PixelsPerInch,96); end;
+  function D(Value: Integer): Integer; begin Result:=MulDiv(Value,CurrentPPI,96); end;
 begin
   inherited Create(AOwner);
   // リスト更新でHWNDが必要になるため、子コントロールの作成より先に親を確定する。
-  Parent:=AParent; BevelOuter:=bvNone; FStore:=Store; FWritable:=Writable; FOnChanged:=Changed;
+  Parent:=AParent; BevelOuter:=bvLowered; BevelWidth:=1; FStore:=Store; FWritable:=Writable; FOnChanged:=Changed;
   FLibraryPath:=TPath.Combine(DataRoot,'Effects\Library.json'); FSelectedGroup:=UngroupedEffectID; FFactory:=NewComicEffectGeneration;
   FGroups:=TComicEffectGroups.Create(TPath.Combine(DataRoot,'Effects\Groups.json'));
   Title:=TLabel.Create(Self); Title.Parent:=Self; Title.Align:=alTop; Title.Height:=D(20); Title.Caption:='グループ';
   FGroupList:=TListBoxEdit.Create(Self); FGroupList.Parent:=Self; FGroupList.Top:=D(20); FGroupList.Align:=alTop; FGroupList.Height:=D(72);
   FGroupList.OnClick:=GroupChanged; FGroupList.OnItemEdited:=GroupEdited; FGroupList.OnCanEdit:=CanEditGroup;
   FGroupList.Hint:='ダブルクリックで名前変更。右クリックで追加・削除。'; FGroupList.ShowHint:=True;
-  Footer:=TPanel.Create(Self); Footer.Parent:=Self; Footer.Align:=alBottom; Footer.Height:=D(150); Footer.BevelOuter:=bvNone;
+  Footer:=TPanel.Create(Self); Footer.Parent:=Self; Footer.Align:=alBottom; Footer.Height:=D(150); Footer.BevelOuter:=bvLowered; Footer.BevelWidth:=1;
   Title:=TLabel.Create(Self); Title.Parent:=Footer; Title.Align:=alTop; Title.Height:=D(18); Title.Caption:='作りたい効果をメモして送信';
   FNote:=TMemo.Create(Self); FNote.Parent:=Footer; FNote.Top:=D(18); FNote.Align:=alTop; FNote.Height:=D(64);
   FNote.MaxLength:=8000; FNote.ScrollBars:=ssVertical; FNote.OnChange:=NoteChanged;

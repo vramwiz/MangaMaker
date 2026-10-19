@@ -101,7 +101,8 @@ procedure TComicLibrariesTestsHelper.PageBasisChecks;
           PNG.Assign(B); PNG.SaveToFile(TPath.Combine(TestFolder,'page-basis-'+IntToStr(PPI)+'.png'));
           for I:=0 to Dialog.ComponentCount-1 do if Dialog.Components[I] is TButton then with TButton(Dialog.Components[I]) do
             Check((Left>=0) and (Top>=0) and (Left+Width<=Parent.ClientWidth) and (Top+Height<=Parent.ClientHeight),
-              'page-basis button remains reachable at PPI '+IntToStr(PPI)+' '+Caption);
+              Format('page-basis button remains reachable at PPI %d %s [%d,%d %dx%d / %dx%d]',
+                [PPI,Caption,Left,Top,Width,Height,Parent.ClientWidth,Parent.ClientHeight]));
         end;
       finally Dialog.Free; end;
       J:=CopyPresets[0].Json;
@@ -204,7 +205,13 @@ procedure TComicLibrariesTestsHelper.RecentProjectChecks;
       AtomicWrite(Path,Before); Recent.Clear(Path); CopyRecent.Load(Path); Check(CopyRecent.Items.Count=0,'explicit history clear saves an empty list');
       Project:=CreateFixtureProject; Project.Initialize('履歴から開く','第1話'); SourceFile:=TPath.Combine(Project.Folder,'Project.json');
       Saved:=Project.Snapshot; Project.Title:='未保存の作業を復元'; Project.SaveDraft; Draft:=Project.Snapshot; Project.Free;
+      BrokenFile:=TPath.Combine(TestFolder,'invalid-startup-project.json'); AtomicWrite(BrokenFile,'{invalid}');
+      Failed:=False; try Probe.OpenProjectFile(BrokenFile,0); except Failed:=True; end;
+      Check(Failed and (Probe.FProject=nil) and not Probe.FPages.Parent.Visible and not Probe.FWorkspaceHost.Visible,
+        'failed initial open keeps startup workspace hidden');
       Probe.OpenProjectFile(SourceFile,0); Check((Probe.FProject.Snapshot=Saved) and not Probe.FDirty,'history open can keep the formally saved project');
+      Check(Probe.FPages.Parent.Visible and Probe.FWorkspaceHost.Visible and Probe.FStatus.Visible,
+        'successful initial open reveals page list workspace and status');
       Check((Probe.FRecent.Items.Count>0) and (Probe.FRecent.Items[0].FileName=SourceFile),'successful open records the original Project.json path');
       Probe.OpenProjectFile(SourceFile,1); Check((Probe.FProject.Snapshot=Draft) and Probe.FDirty,'history open can restore a valid draft and mark the project dirty');
       Check(Probe.FRecent.Items[0].FileName=SourceFile,'draft restoration keeps the normal project path in history');

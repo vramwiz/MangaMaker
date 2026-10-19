@@ -11,7 +11,7 @@ type
   TComicIcon = (ciSelect,ciRectangle,ciEllipse,ciRounded,ciPolygon,ciSplit,ciOrder,ciBalloonEllipse,
     ciBalloonRounded,ciTail,ciLayout,ciPanelEdit,ciImage,ciCharacters,ciNew,ciOpen,
     ciSave,ciUndo,ciRedo,ciExport,ciAddPage,ciDelete,ciUp,ciDown,ciRegister,
-    ciApplyLayout,ciInsertLayout,ciAssignImage,ciDetachImage,ciApplyText,ciThought,ciEffects);
+    ciApplyLayout,ciInsertLayout,ciAssignImage,ciDetachImage,ciApplyText,ciThought,ciEffects,ciImageLibrary);
   TComicButtonRole = (brAlways,brProject,brSave,brUndo,brRedo,brExport,brAddPage,
     brDeletePage,brPageUp,brPageDown,brRegister,brApplyLayout,brInsertLayout,
     brMode,brTool,brDeletePanel,brAssignImage,brDetachImage,brTail,brApplyText,brDeleteBalloon,brManageLayout,brDeleteTail,brTextPlacement,
@@ -127,8 +127,9 @@ begin
       if Icon=ciApplyLayout then begin Line(3,7,6,10); Line(6,10,12,3); end;
       if Icon=ciInsertLayout then begin Line(-13,0,-6,0); Line(-9,-3,-6,0); Line(-9,3,-6,0); end;
     end;
-    ciImage,ciAssignImage,ciDetachImage: begin
+    ciImage,ciAssignImage,ciDetachImage,ciImageLibrary: begin
       Picture;
+      if Icon=ciImageLibrary then begin Line(-8,13,13,13); Line(13,13,13,-7); end;
       if Icon=ciAssignImage then Plus(7,8);
       if Icon=ciDetachImage then begin Line(4,4,11,11); Line(11,4,4,11); end;
     end;

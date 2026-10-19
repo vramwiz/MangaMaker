@@ -2,7 +2,7 @@
 
 // 責務：人物・場面の管理画面を提供し、共有ライブラリと作品素材の保存範囲を区別する。
 interface
-uses Winapi.Windows, System.SysUtils, System.Classes, System.UITypes, System.IOUtils, System.Generics.Collections,
+uses ComicDpi, ComicImeFocus, Winapi.Windows, Winapi.Messages, System.SysUtils, System.Classes, System.UITypes, System.IOUtils, System.Generics.Collections,
   Vcl.Forms, Vcl.Controls, Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.ComCtrls,
   Vcl.Dialogs, Vcl.Graphics, Vcl.Menus, Vcl.Imaging.pngimage, Vcl.Imaging.jpeg, ComicModel, ComicAssetEditing, ComicCharacterRefs, ComicScriptAssist;
 type
@@ -62,13 +62,14 @@ type
     procedure ChooseReferences(Sender: TObject);
     procedure SceneVariantClick(Sender: TObject);
   protected
+    procedure CMFocusChanged(var Message: TCMFocusChanged); message CM_FOCUSCHANGED;
     function ConfirmSceneRemoval(const Message: string): Boolean; virtual;
     procedure ReportSaveError(const Message: string); virtual;
     procedure PersistChanges; virtual;
   public
     constructor CreateManager(AOwner: TComponent; List: TObjectList<TComicAsset>;
       Project: TComicProject; Characters: Boolean; Writable: Boolean=True; PresetHandler: TNotifyEvent=nil;
-      CharacterList: TObjectList<TComicAsset>=nil; GenerateHandler: TNotifyEvent=nil; CancelHandler: TNotifyEvent=nil; ScriptGenerateHandler: TNotifyEvent=nil);
+      CharacterList: TObjectList<TComicAsset>=nil; GenerateHandler: TNotifyEvent=nil; CancelHandler: TNotifyEvent=nil; ScriptGenerateHandler: TNotifyEvent=nil; WorkspaceParent: TWinControl=nil);
     destructor Destroy; override;
     procedure SetGenerationBusy(Busy: Boolean; const Status: string);
     procedure RefreshFromGenerated(const AssetID: string; Preview: TGraphic); virtual;
@@ -78,6 +79,7 @@ type
     property GenerationBusy: Boolean read FGenerationBusy;
     property GenerationSessionID: string read FGenerationSessionID;
     procedure FlushDraft;
+    procedure SaveWorkspace;
     procedure RefreshFromExternal;
     procedure SelectAsset(const ID: string);
     procedure SetGenerationSummary(const Name,Instructions: string);
@@ -97,53 +99,72 @@ type
     property CommonNotes: TMemo read FCharacterNotes;
   end;
 implementation
+procedure TAssetDialog.CMFocusChanged(var Message: TCMFocusChanged);
+begin inherited; if not (csDestroying in ComponentState) then CloseControlIme(Message.Sender); end;
 procedure TAssetDialog.FlushDraft;
 begin Store; end;
+procedure TAssetDialog.SaveWorkspace;
+begin PersistChanges; end;
 procedure TAssetDialog.RefreshFromExternal;
 begin BuildTree; end;
 procedure TAssetDialog.SelectAsset(const ID: string);
 var Node: TTreeNode;
-begin for Node in FTree.Items do if (Node.Data<>nil) and (TComicAsset(Node.Data).ID=ID) then begin FTree.Selected:=Node; Exit; end; end;
-constructor TAssetDialog.CreateManager(AOwner: TComponent; List: TObjectList<TComicAsset>;
-  Project: TComicProject; Characters: Boolean; Writable: Boolean; PresetHandler: TNotifyEvent; CharacterList: TObjectList<TComicAsset>; GenerateHandler,CancelHandler: TNotifyEvent; ScriptGenerateHandler: TNotifyEvent);
-var Left,Right,Bar,Details: TPanel; B: TButton; L: TLabel;
-  procedure Button(const Caption: string; X,W,Tag: Integer; Handler: TNotifyEvent);
-  begin B:=TButton.Create(Self); B.Parent:=Bar; B.SetBounds(X,10,W,32); B.Caption:=Caption; B.Tag:=Tag; B.OnClick:=Handler; B.Enabled:=Writable or (Caption='保存して閉じる'); end;
 begin
-  inherited CreateNew(AOwner); FList:=List; FProject:=Project; FCharacters:=Characters; FWritable:=Writable; FCharacterList:=CharacterList;
+  for Node in FTree.Items do if (Node.Data<>nil) and (TComicAsset(Node.Data).ID=ID) then begin
+    FTree.Selected:=Node;
+    // 埋込み時のHWND再作成や同一ノード選択でも入力欄を対象と同期する。
+    if FCurrent<>TComicAsset(Node.Data) then Change(FTree,Node);
+    Exit;
+  end;
+end;
+constructor TAssetDialog.CreateManager(AOwner: TComponent; List: TObjectList<TComicAsset>;
+  Project: TComicProject; Characters: Boolean; Writable: Boolean; PresetHandler: TNotifyEvent; CharacterList: TObjectList<TComicAsset>; GenerateHandler,CancelHandler: TNotifyEvent; ScriptGenerateHandler: TNotifyEvent; WorkspaceParent: TWinControl);
+var Left,Right,Bar,Details: TPanel; B: TButton; L: TLabel;
+  function D(Value: Integer): Integer; begin Result:=MulDiv(Value,CurrentPPI,96); end;
+  procedure Button(const Caption: string; X,W,Tag: Integer; Handler: TNotifyEvent);
+  begin B:=TButton.Create(Self); B.Parent:=Bar; B.SetBounds(D(X),D(10),D(W),D(32)); B.Caption:=Caption; B.Tag:=Tag; B.OnClick:=Handler; B.Enabled:=Writable or (Caption='保存して閉じる'); end;
+begin
+  inherited CreateScaledNew(AOwner,OwnerControlPPI(AOwner)); FList:=List; FProject:=Project; FCharacters:=Characters; FWritable:=Writable; FCharacterList:=CharacterList;
   FRetired:=TObjectList<TComicAsset>.Create;
   FScriptGenerateHandler:=ScriptGenerateHandler; FGenerateHandler:=GenerateHandler; FCancelHandler:=CancelHandler; FGenerationSessionID:=NewUID;
   if Characters then NormalizeCharacters(List);
-  Position:=poOwnerFormCenter; Width:=940; Height:=680; Constraints.MinWidth:=760; Constraints.MinHeight:=580;
+  Position:=poOwnerFormCenter; Width:=D(940); Height:=D(680); Constraints.MinWidth:=D(760); Constraints.MinHeight:=D(580);
+  if WorkspaceParent<>nil then begin
+    // ツリーにHWNDを作らせる前に子フォームとして確定し、後からの再作成で項目を失わない。
+    BorderStyle:=bsNone; Position:=poDesigned; Constraints.MinWidth:=0; Constraints.MinHeight:=0;
+    Parent:=WorkspaceParent; Align:=alClient;
+    HandleNeeded;
+    ScaleForPPI(WorkspaceParent.CurrentPPI);
+  end;
   Font.Name:='Yu Gothic UI'; Font.Size:=10;
   if Characters then Caption:='キャラクター管理 — 共通ライブラリ' else Caption:='画像管理 — '+Project.Title;
-  Bar:=TPanel.Create(Self); Bar.Parent:=Self; Bar.Align:=alBottom; Bar.Height:=54; Bar.BevelOuter:=bvNone;
+  Bar:=TPanel.Create(Self); Bar.Parent:=Self; Bar.Align:=alBottom; Bar.Height:=D(54); Bar.BevelOuter:=bvLowered; Bar.BevelWidth:=1;
   if Characters then begin Button('人物を追加',12,130,0,AddItem); Button('服装を追加',150,130,1,AddItem); end;
   if Characters then begin Button('画像を登録',324,130,0,ChooseImage); Button('保存して閉じる',654,220,0,SaveClick); end;
   if not Characters and Assigned(PresetHandler) then Button('生成プリセット',466,170,0,PresetHandler);
   if Assigned(GenerateHandler) then begin
-    Bar.Height:=102;
-    FGenerate:=TButton.Create(Self); FGenerate.Parent:=Bar; FGenerate.SetBounds(12,56,200,34);
-    if not Characters then FGenerate.Top:=10;
+    Bar.Height:=D(102);
+    FGenerate:=TButton.Create(Self); FGenerate.Parent:=Bar; FGenerate.SetBounds(D(12),D(56),D(200),D(34));
+    if not Characters then FGenerate.Top:=D(10);
     FGenerate.Caption:='Codexで画像生成'; FGenerate.OnClick:=GenerateClick;
-    FCancelGeneration:=TButton.Create(Self); FCancelGeneration.Parent:=Bar; FCancelGeneration.SetBounds(220,56,100,34);
+    FCancelGeneration:=TButton.Create(Self); FCancelGeneration.Parent:=Bar; FCancelGeneration.SetBounds(D(220),D(56),D(100),D(34));
     FCancelGeneration.Caption:='生成を中止'; FCancelGeneration.OnClick:=CancelGenerateClick; FCancelGeneration.Enabled:=False;
-    if not Characters then FCancelGeneration.Top:=10;
-    FGenerationStatus:=TLabel.Create(Self); FGenerationStatus.Parent:=Bar; FGenerationStatus.SetBounds(330,56,580,38);
+    if not Characters then FCancelGeneration.Top:=D(10);
+    FGenerationStatus:=TLabel.Create(Self); FGenerationStatus.Parent:=Bar; FGenerationStatus.SetBounds(D(330),D(56),D(580),D(38));
     FGenerationStatus.AutoSize:=False; FGenerationStatus.WordWrap:=True; FGenerationStatus.Anchors:=[akLeft,akTop,akRight];
     FGenerationStatus.Caption:='対象の名前・説明を入力して、生成ボタンを押してください。';
   end;
   if not Characters then begin
     if Assigned(ScriptGenerateHandler) then begin
       FScriptGenerate:=TButton.Create(Self); FScriptGenerate.Parent:=Bar;
-      FScriptGenerate.SetBounds(12,56,300,32); FScriptGenerate.Caption:='台本の未取得画像を連続生成';
+      FScriptGenerate.SetBounds(D(12),D(56),D(300),D(32)); FScriptGenerate.Caption:='台本の未取得画像を連続生成';
       FScriptGenerate.OnClick:=ScriptGenerateClick;
     end;
-    Bar.Height:=102;
+    Bar.Height:=D(102);
   end;
-  Left:=TPanel.Create(Self); Left.Parent:=Self; Left.Align:=alLeft; Left.Width:=250; Left.BevelOuter:=bvNone;
+  Left:=TPanel.Create(Self); Left.Parent:=Self; Left.Align:=alLeft; Left.Width:=D(250); Left.BevelOuter:=bvLowered; Left.BevelWidth:=1;
   if not Characters then begin
-    L:=TLabel.Create(Self); L.Parent:=Left; L.Align:=alTop; L.AutoSize:=False; L.Height:=44; L.WordWrap:=True;
+    L:=TLabel.Create(Self); L.Parent:=Left; L.Align:=alTop; L.AutoSize:=False; L.Height:=D(44); L.WordWrap:=True;
     L.Caption:='一覧を右クリック：追加・登録・削除'+sLineBreak+'空欄でも新規場面を追加できます。';
   end;
   FTree:=TTreeView.Create(Self); FTree.Parent:=Left; FTree.Align:=alClient; FTree.ReadOnly:=True; FTree.HideSelection:=False; FTree.OnChange:=Change;
@@ -156,33 +177,35 @@ begin
     FPopup:=TPopupMenu.Create(Self); FPopup.OnPopup:=Popup; FTree.PopupMenu:=FPopup; FTree.RightClickSelect:=True;
     BuildImageMenu;
   end;
-  Right:=TPanel.Create(Self); Right.Parent:=Self; Right.Align:=alClient; Right.BevelOuter:=bvNone; Right.Padding.SetBounds(18,16,18,16);
+  Right:=TPanel.Create(Self); Right.Parent:=Self; Right.Align:=alClient; Right.BevelOuter:=bvLowered; Right.BevelWidth:=1; Right.Padding.SetBounds(D(18),D(16),D(18),D(16));
   if Characters then begin
-    L:=TLabel.Create(Self); L.Parent:=Right; L.AutoSize:=False; L.Align:=alTop; L.Height:=24; L.Caption:='人物名（全服装の共通情報）'; L.Top:=0;
-    FCharacterName:=TEdit.Create(Self); FCharacterName.Parent:=Right; FCharacterName.Align:=alTop; FCharacterName.Height:=30; FCharacterName.Top:=24;
+    L:=TLabel.Create(Self); L.Parent:=Right; L.AutoSize:=False; L.Align:=alTop; L.Height:=D(24); L.Caption:='人物名（全服装の共通情報）'; L.Top:=D(0);
+    FCharacterName:=TEdit.Create(Self); FCharacterName.Parent:=Right; FCharacterName.Align:=alTop; FCharacterName.Height:=D(30); FCharacterName.Top:=D(24);
   end;
-  L:=TLabel.Create(Self); L.Parent:=Right; L.AutoSize:=False; L.Align:=alTop; L.Height:=24; L.Caption:='名前／服装名・場面名';
-  if Characters then begin L.Caption:='服装／見た目の状態名'; L.Top:=54; end;
-  FName:=TEdit.Create(Self); FName.Parent:=Right; FName.Align:=alTop; FName.Height:=30;
-  if Characters then FName.Top:=78;
-  FHint:=TLabel.Create(Self); FHint.Parent:=Right; FHint.AutoSize:=False; FHint.Align:=alBottom; FHint.Height:=44; FHint.WordWrap:=True;
+  L:=TLabel.Create(Self); L.Parent:=Right; L.AutoSize:=False; L.Align:=alTop; L.Height:=D(24); L.Caption:='名前／服装名・場面名';
+  if Characters then begin L.Caption:='服装／見た目の状態名'; L.Top:=D(54); end;
+  FName:=TEdit.Create(Self); FName.Parent:=Right; FName.Align:=alTop; FName.Height:=D(30);
+  if Characters then FName.Top:=D(78);
+  FHint:=TLabel.Create(Self); FHint.Parent:=Right; FHint.AutoSize:=False; FHint.Align:=alBottom; FHint.Height:=D(44); FHint.WordWrap:=True;
   FHint.Caption:='名前と参照画像を登録してください。画像は管理フォルダーにコピーして保持します。';
   if not FWritable then begin
     Caption:=Caption+'（読み取りのみ）'; if Characters then B.Caption:='閉じる';
     FHint.Caption:='ライブラリの読込に失敗したため保存を停止しています。元ファイルを確認・修復してから管理画面を開き直してください。';
   end;
-  FNotes:=TMemo.Create(Self); FNotes.Parent:=Right; FNotes.Align:=alBottom; FNotes.Height:=130; FNotes.ScrollBars:=ssVertical;
+  FNotes:=TMemo.Create(Self); FNotes.Parent:=Right; FNotes.Align:=alBottom; FNotes.Height:=D(130); FNotes.ScrollBars:=ssVertical;
   if Characters then begin
-    Details:=TPanel.Create(Self); Details.Parent:=Right; Details.Align:=alBottom; Details.Height:=228; Details.BevelOuter:=bvNone;
-    FNotes.Parent:=Details; FNotes.Align:=alNone; FNotes.SetBounds(0,138,Details.ClientWidth,90); FNotes.Anchors:=[akLeft,akTop,akRight];
-    FCharacterNotes:=TMemo.Create(Self); FCharacterNotes.Parent:=Details; FCharacterNotes.SetBounds(0,24,Details.ClientWidth,80);
+    Details:=TPanel.Create(Self); Details.Parent:=Right; Details.Align:=alBottom; Details.Height:=D(228); Details.BevelOuter:=bvNone;
+    FNotes.Parent:=Details; FNotes.Align:=alNone; FNotes.SetBounds(D(0),D(138),Details.ClientWidth,D(90)); FNotes.Anchors:=[akLeft,akTop,akRight];
+    FCharacterNotes:=TMemo.Create(Self); FCharacterNotes.Parent:=Details; FCharacterNotes.SetBounds(D(0),D(24),Details.ClientWidth,D(80));
     FCharacterNotes.Anchors:=[akLeft,akTop,akRight]; FCharacterNotes.ScrollBars:=ssVertical;
-    L:=TLabel.Create(Self); L.Parent:=Details; L.SetBounds(0,0,Details.ClientWidth,24); L.Caption:='人物共通の外見補足';
-    L:=TLabel.Create(Self); L.Parent:=Details; L.SetBounds(0,114,Details.ClientWidth,24); L.Caption:='この服装・状態の補足';
+    L:=TLabel.Create(Self); L.Parent:=Details; L.SetBounds(D(0),D(0),Details.ClientWidth,D(24)); L.Caption:='人物共通の外見補足';
+    L:=TLabel.Create(Self); L.Parent:=Details; L.SetBounds(D(0),D(114),Details.ClientWidth,D(24)); L.Caption:='この服装・状態の補足';
   end;
   FImage:=TImage.Create(Self); FImage.Parent:=Right; FImage.Align:=alClient; FImage.Proportional:=True; FImage.Center:=True;
   FBaseHint:=FHint.Caption; OnCloseQuery:=CloseCheck; BuildTree;
   if not Characters then SetGenerationSummary(Project.GenerationPresetName,Project.GenerationInstructions);
+  // 実行時に組み立てた96PPIの配置を所有フォームのモニターへ一度だけ合わせる。
+  if AOwner is TCustomForm then ScaleForPPI(TCustomForm(AOwner).CurrentPPI);
 end;
 procedure TAssetDialog.BuildImageMenu;
   function Item(const Caption: string; Tag: Integer; Handler: TNotifyEvent): TMenuItem;
@@ -259,7 +282,7 @@ end;
 procedure TAssetDialog.SetGenerationSummary(const Name,Instructions: string);
 begin
   if FCharacters then Exit;
-  FHint.Height:=64;
+  FHint.Height:=MulDiv(64,CurrentPPI,96);
   if Name='' then FBaseHint:='生成指示: 未選択。生成プリセットで共通指示を選び、作品に適用できます。'
   else FBaseHint:='生成指示: '+Name+sLineBreak+Copy(StringReplace(Instructions,sLineBreak,' ',[rfReplaceAll]),1,160);
   FHint.Caption:=FBaseHint; if FPreviewError<>'' then FHint.Caption:=FHint.Caption+sLineBreak+'参照画像の表示: '+FPreviewError;

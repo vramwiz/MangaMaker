@@ -93,7 +93,7 @@ procedure TComicWorkspaceViewportHelper.ExecuteViewWheel(Sender: TObject; Shift:
 var P: TPoint; Anchor: TPointF; Zoom,DPI: Double;
 begin
   {$IFDEF DEBUG}PerfScope.Start(cpWheel);{$ENDIF}
-  if (Page=nil) or (FCanvas=nil) then Exit;
+  if (Page=nil) or (FCanvas=nil) or not FView.Visible then Exit;
   P:=FCanvas.ScreenToClient(MousePos);
   if not FCanvas.ClientRect.Contains(P) then Exit;
   Handled:=True;
@@ -133,12 +133,12 @@ begin
       if (Length(SelectedPanelIDs)<=1) and (HitVertex(Page.Panels[FPanelIndex],P)>=0) then Exit;
     end;
     if FTabs.ActivePageIndex=2 then R:=FRenderer.ImageBounds(FProject,Page.Panels[FPanelIndex]);
-    if HitHandle(R,P,9/FScale)<>0 then Exit;
+    if HitHandle(R,P,MulDiv(9,CurrentPPI,96)/FScale)<>0 then Exit;
   end;
   if (FBalloonIndex>=0) and (FBalloonIndex<Page.Balloons.Count) and (FTabs.ActivePageIndex=3) then begin
     Balloon:=Page.Balloons[FBalloonIndex]; R:=Balloon.Bounds;
     if FTool=13 then R:=FRenderer.BalloonTextBounds(Balloon);
-    if HitHandle(R,P,9/FScale)<>0 then Exit;
+    if HitHandle(R,P,MulDiv(9,CurrentPPI,96)/FScale)<>0 then Exit;
     if (FTool=12) and (FTailIndex>=0) and (FTailIndex<Balloon.Tails.Count) then
       for Point in Balloon.Tails[FTailIndex].Handles do
         if Hypot(Point.X-P.X,Point.Y-P.Y)*FScale<=MulDiv(12,CurrentPPI,96) then Exit;

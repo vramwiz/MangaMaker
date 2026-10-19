@@ -66,7 +66,8 @@ begin
   M:=TMenuItem.Create(Self); M.Caption:='表示'; M.OnClick:=MenuOpening; Menu.Items.Add(M);
   for I:=0 to High(FModeMenu) do begin
     case I of 0: Item('コマ割り管理',ModeClick); 1: Item('コマ編集',ModeClick);
-      2: Item('画像配置',ModeClick); 3: Item('吹き出し',ModeClick); 4: Item('漫画効果',ModeClick); end;
+      2: Item('画像配置',ModeClick); 3: Item('吹き出し',ModeClick); 4: Item('漫画効果',ModeClick);
+      5: Item('画像管理',ModeClick); end;
     FModeMenu[I]:=N; N.Tag:=I; N.RadioItem:=True; N.GroupIndex:=1;
     N.ShortCut:=ShortCut(Ord('1')+I,[ssCtrl]);
   end;
@@ -81,8 +82,11 @@ begin
   Item('漫画効果素材...',EffectMaterials);
   Item('-',nil); Item('2点配置をドラッグで操作',TogglePlacementInput); FDragPlacementMenu:=N; N.Checked:=True;
   FStatus:=TStatusBar.Create(Self); FStatus.Parent:=Self; FStatus.SimplePanel:=True; FStatus.Align:=alBottom;
-  Left:=TPanel.Create(Self); Left.Parent:=Self; Left.Align:=alLeft; Left.Width:=D(184); Left.BevelOuter:=bvNone;
-  Bar:=TPanel.Create(Self); Bar.Parent:=Left; Bar.Align:=alTop; Bar.Height:=D(82); Bar.BevelOuter:=bvNone;
+  FStatus.Visible:=False;
+  // 操作領域の境界を細い縁で示し、同色のパネルが一続きに見えるのを防ぐ。
+  Left:=TPanel.Create(Self); Left.Parent:=Self; Left.Align:=alLeft; Left.Width:=D(184); Left.BevelOuter:=bvLowered; Left.BevelWidth:=1;
+  Left.Visible:=False;
+  Bar:=TPanel.Create(Self); Bar.Parent:=Left; Bar.Align:=alTop; Bar.Height:=D(82); Bar.BevelOuter:=bvLowered; Bar.BevelWidth:=1;
   LabelAt(Bar,'ページ',8,6,22);
   L.Width:=D(164);
   Icon(Bar,'ページを追加',6,34,40,40,ciAddPage,0,brAddPage,AddPage);
@@ -93,18 +97,23 @@ begin
   FPages.Style:=lbOwnerDrawFixed; FPages.ItemHeight:=D(158); FPages.OnDrawItem:=DrawPageItem; FPages.OnClick:=PageSelect;
   FPages.MultiSelect:=True; FPages.ExtendedSelect:=True; FPages.DragMode:=dmAutomatic;
   FPages.OnDragOver:=PagesDragOver; FPages.OnDragDrop:=PagesDragDrop; FPages.OnEndDrag:=PagesDragEnd;
-  Right:=TPanel.Create(Self); Right.Parent:=Self; Right.Align:=alRight; Right.Width:=D(310); Right.BevelOuter:=bvNone;
-  Modes:=TPanel.Create(Self); Modes.Parent:=Right; Modes.Align:=alTop; Modes.Height:=D(88); Modes.BevelOuter:=bvNone;
-  FModeButtons[0]:=Icon(Modes,'コマ割り管理 (Ctrl+1)',12,8,44,44,ciLayout,0,brMode,ModeClick);
-  FModeButtons[1]:=Icon(Modes,'コマ編集 (Ctrl+2)',72,8,44,44,ciPanelEdit,1,brMode,ModeClick);
-  FModeButtons[2]:=Icon(Modes,'画像配置 (Ctrl+3)',132,8,44,44,ciImage,2,brMode,ModeClick);
-  FModeButtons[3]:=Icon(Modes,'吹き出し (Ctrl+4)',192,8,44,44,ciBalloonEllipse,3,brMode,ModeClick);
-  FModeButtons[4]:=Icon(Modes,'漫画効果 (Ctrl+5)',252,8,44,44,ciEffects,4,brMode,ModeClick);
+  FWorkspaceHost:=TPanel.Create(Self); FWorkspaceHost.Parent:=Self; FWorkspaceHost.Align:=alClient; FWorkspaceHost.BevelOuter:=bvNone;
+  FWorkspaceHost.Visible:=False;
+  // 端数DPIでも縦スクロールバーと設定欄の右余白が競合しない幅を確保する。
+  Right:=TPanel.Create(Self); Right.Parent:=FWorkspaceHost; Right.Align:=alRight; Right.Width:=D(320); Right.BevelOuter:=bvLowered; Right.BevelWidth:=1;
+  FToolsPanel:=Right;
+  Modes:=TPanel.Create(Self); Modes.Parent:=Right; Modes.Align:=alTop; Modes.Height:=D(88); Modes.BevelOuter:=bvLowered; Modes.BevelWidth:=1;
+  FModeButtons[5]:=Icon(Modes,'画像管理 (Ctrl+6)',8,8,44,44,ciImageLibrary,5,brMode,ModeClick);
+  FModeButtons[0]:=Icon(Modes,'コマ割り管理 (Ctrl+1)',58,8,44,44,ciLayout,0,brMode,ModeClick);
+  FModeButtons[1]:=Icon(Modes,'コマ編集 (Ctrl+2)',108,8,44,44,ciPanelEdit,1,brMode,ModeClick);
+  FModeButtons[2]:=Icon(Modes,'画像配置 (Ctrl+3)',158,8,44,44,ciImage,2,brMode,ModeClick);
+  FModeButtons[3]:=Icon(Modes,'吹き出し (Ctrl+4)',208,8,44,44,ciBalloonEllipse,3,brMode,ModeClick);
+  FModeButtons[4]:=Icon(Modes,'漫画効果 (Ctrl+5)',258,8,44,44,ciEffects,4,brMode,ModeClick);
   FModeTitle:=TLabel.Create(Self); FModeTitle.Parent:=Modes; FModeTitle.AutoSize:=False;
   FModeTitle.SetBounds(D(12),D(60),D(282),D(24)); FModeTitle.Font.Style:=[fsBold];
   FTabs:=TPageControl.Create(Self); FTabs.Parent:=Right; FTabs.Align:=alClient;
   Tab:=TabSheet('コマ割り管理');
-  P:=TPanel.Create(Self); P.Parent:=Tab; P.Align:=alTop; P.Height:=D(188); P.BevelOuter:=bvNone;
+  P:=TPanel.Create(Self); P.Parent:=Tab; P.Align:=alTop; P.Height:=D(188); P.BevelOuter:=bvLowered; P.BevelWidth:=1;
   LabelAt(P,'中央：内容を置換（元に戻せます）'+sLineBreak+'左のページ間：新規ページに挿入',10,8);
   Icon(P,'現在のコマ割りを登録',10,56,270,36,ciRegister,0,brRegister,RegisterLayout,True);
   Icon(P,'選択に適用',10,100,132,36,ciApplyLayout,0,brApplyLayout,Template,True);
@@ -134,7 +143,7 @@ begin
   Icon(Body,'現在のコマ割りを登録',12,340,268,40,ciRegister,0,brRegister,RegisterLayout,True);
   Body.VertScrollBar.Range:=D(392);
   Tab:=TabSheet('画像配置');
-  P:=TPanel.Create(Self); P.Parent:=Tab; P.Align:=alTop; P.Height:=D(98); P.BevelOuter:=bvNone;
+  P:=TPanel.Create(Self); P.Parent:=Tab; P.Align:=alTop; P.Height:=D(98); P.BevelOuter:=bvLowered; P.BevelWidth:=1;
   LabelAt(P,'画像をコマへドラッグ。外周8点で拡縮。'+sLineBreak+'解除：コマを右クリック／選択してDel',10,8,44);
   LabelAt(P,'コマ端・中央へ吸着（Altで解除）。'+sLineBreak+'スナップ設定はコマ編集と共通。',10,54,40);
   FImages:=TComicImageList.Create(Self); FImages.Parent:=Tab; FImages.Align:=alClient;
@@ -155,42 +164,37 @@ begin
   Icon(Body,'しっぽ編集 (A)：根元・幅・先端の3点',120,66,40,44,ciSelect,12,brTail,Tail,False,3);
   Icon(Body,'選択しっぽを削除 (Del)',174,66,40,44,ciDelete,0,brDeleteTail,DeleteTail,False,3);
   Icon(Body,'文字入力 (Enter)：選択中のセリフを編集',228,66,40,44,ciApplyText,14,brTool,BeginTextInput,False,3);
-  LabelAt(Body,'S 本体 / T セリフ・再度Tで縦横切替'+sLineBreak+'Enter 入力 / U 図形 / P しっぽ / A 編集',12,118,44);
-  FScriptLines:=TComboBox.Create(Self); FScriptLines.Parent:=Body; FScriptLines.SetBounds(D(12),D(164),D(270),D(24));
+  LabelAt(Body,'Enter 入力 / Ctrl+Enter 確定',12,114,22);
+  FScriptLines:=TComboBox.Create(Self); FScriptLines.Parent:=Body; FScriptLines.SetBounds(D(12),D(140),D(270),D(26));
   FScriptLines.Style:=csDropDownList; FScriptLines.OnDropDown:=ScriptLinesDropDown; FScriptLines.OnChange:=ScriptLineSelected;
   FScriptLines.Items.Add('台本からセリフを選択'); FScriptLines.ItemIndex:=0;
   FText:=TMemo.Create(Self); FText.Parent:=Body; FText.SetBounds(D(12),D(192),D(270),D(100)); FText.ScrollBars:=ssVertical;
   FText.ImeMode:=imOpen;
-  Icon(Body,'専用文字入力',12,298,270,32,ciApplyText,0,brApplyText,TextInputDialog,True).Hint:='IMEとUTF-16編集バッファを使う専用入力。確定で反映、取消で作品を維持。';
-  FVertical:=TCheckBox.Create(Self); FVertical.Parent:=Body; FVertical.SetBounds(D(12),D(280),D(130),D(26)); FVertical.Caption:='縦書き'; FVertical.Checked:=True;
-  FTransparent:=TCheckBox.Create(Self); FTransparent.Parent:=Body; FTransparent.SetBounds(D(144),D(280),D(130),D(26)); FTransparent.Caption:='文字だけ表示';
-  FOverflow:=TCheckBox.Create(Self); FOverflow.Parent:=Body; FOverflow.SetBounds(D(12),D(312),D(270),D(26)); FOverflow.Caption:='コマ枠からはみ出すことを許可'; FOverflow.Checked:=True;
-  FFont:=TComboBox.Create(Self); FFont.Parent:=Body; FFont.SetBounds(D(12),D(354),D(92),D(28)); FFont.Style:=csDropDown;
+  // ページ上での入力を主導線にする。本文同期と従来入力の処理は復帰できるよう保持する。
+  FText.Visible:=False; FText.TabStop:=False;
+  IconButton:=Icon(Body,'専用文字入力',12,298,270,32,ciApplyText,0,brApplyText,TextInputDialog,True);
+  IconButton.Visible:=False; IconButton.TabStop:=False;
+  IconButton.Hint:='IMEとUTF-16編集バッファを使う専用入力。確定で反映、取消で作品を維持。';
+  FVertical:=TCheckBox.Create(Self); FVertical.Parent:=Body; FVertical.SetBounds(D(114),D(208),D(80),D(26)); FVertical.Caption:='縦書き'; FVertical.Checked:=True;
+  FTransparent:=TCheckBox.Create(Self); FTransparent.Parent:=Body; FTransparent.SetBounds(D(202),D(208),D(80),D(26)); FTransparent.Caption:='文字のみ';
+  FOverflow:=TCheckBox.Create(Self); FOverflow.Parent:=Body; FOverflow.SetBounds(D(12),D(344),D(270),D(26)); FOverflow.Caption:='コマ枠の外にも表示'; FOverflow.Checked:=True;
+  FFont:=TComboBox.Create(Self); FFont.Parent:=Body; FFont.SetBounds(D(12),D(208),D(92),D(28)); FFont.Style:=csDropDown;
   FFont.Items.AddStrings(['16','20','24','28','32','40','48','64','80']); FFont.Text:=IntToStr(FFontHistory.LastSize);
-  FFontBold:=TCheckBox.Create(Self); FFontBold.Parent:=Body; FFontBold.SetBounds(D(114),D(354),D(80),D(26)); FFontBold.Caption:='太字';
-  FFontItalic:=TCheckBox.Create(Self); FFontItalic.Parent:=Body; FFontItalic.SetBounds(D(202),D(354),D(80),D(26)); FFontItalic.Caption:='斜体';
-  FFontFamily:=TComboBox.Create(Self); FFontFamily.Parent:=Body; FFontFamily.SetBounds(D(12),D(394),D(270),D(28));
+  FFontBold:=TCheckBox.Create(Self); FFontBold.Parent:=Body; FFontBold.SetBounds(D(12),D(242),D(62),D(26)); FFontBold.Caption:='太字';
+  FFontItalic:=TCheckBox.Create(Self); FFontItalic.Parent:=Body; FFontItalic.SetBounds(D(80),D(242),D(62),D(26)); FFontItalic.Caption:='斜体';
+  FFontFamily:=TComboBox.Create(Self); FFontFamily.Parent:=Body; FFontFamily.SetBounds(D(12),D(174),D(270),D(28));
   FFontFamily.Style:=csDropDownList; FFontFamily.OnDropDown:=FontDropDown; FontDropDown(nil);
   FFontFamily.ItemIndex:=FFontFamily.Items.IndexOf(FLastFontFamily);
-  FFontUnderline:=TCheckBox.Create(Self); FFontUnderline.Parent:=Body; FFontUnderline.SetBounds(D(12),D(432),D(128),D(26)); FFontUnderline.Caption:='下線';
-  FFontStrikeOut:=TCheckBox.Create(Self); FFontStrikeOut.Parent:=Body; FFontStrikeOut.SetBounds(D(154),D(432),D(128),D(26)); FFontStrikeOut.Caption:='取消線';
-  ColorButton:=TButton.Create(Self); ColorButton.Parent:=Body; ColorButton.SetBounds(D(12),D(472),D(96),D(34)); ColorButton.Caption:='文字色...'; ColorButton.OnClick:=ChooseTextColor;
-  LabelAt(Body,'変更はすぐに反映',114,536,28); L.Width:=D(168);
-  Icon(Body,'選択した吹き出しを削除',12,524,270,40,ciDelete,1,brDeleteBalloon,DeleteObject,True);
-  // 本体としっぽのツールを2段にまとめ、設定欄との重なりを避ける。
-  FVertical.Top:=FVertical.Top+D(60); FTransparent.Top:=FTransparent.Top+D(60); FOverflow.Top:=FOverflow.Top+D(60);
-  FFont.Top:=FFont.Top+D(60); FFontBold.Top:=FFontBold.Top+D(60); FFontItalic.Top:=FFontItalic.Top+D(60);
-  FFontFamily.Top:=FFontFamily.Top+D(60); FFontUnderline.Top:=FFontUnderline.Top+D(60); FFontStrikeOut.Top:=FFontStrikeOut.Top+D(60);
-  ColorButton.Top:=ColorButton.Top+D(60);
-  for IconButton in FIconButtons do if IconButton.Parent=Body then begin
-    if IconButton.Role=brDeleteBalloon then IconButton.Top:=D(704);
-  end;
-  LabelAt(Body,'本体の輪郭',12,586,24);
-  FContour:=TComboBox.Create(Self); FContour.Parent:=Body; FContour.SetBounds(D(114),D(582),D(168),D(28));
+  FFontUnderline:=TCheckBox.Create(Self); FFontUnderline.Parent:=Body; FFontUnderline.SetBounds(D(148),D(242),D(62),D(26)); FFontUnderline.Caption:='下線';
+  FFontStrikeOut:=TCheckBox.Create(Self); FFontStrikeOut.Parent:=Body; FFontStrikeOut.SetBounds(D(216),D(242),D(66),D(26)); FFontStrikeOut.Caption:='取消線';
+  ColorButton:=TButton.Create(Self); ColorButton.Parent:=Body; ColorButton.SetBounds(D(12),D(276),D(86),D(28)); ColorButton.Caption:='文字色'; ColorButton.OnClick:=ChooseTextColor;
+  Icon(Body,'選択した吹き出しを削除',12,378,270,32,ciDelete,1,brDeleteBalloon,DeleteObject,True);
+  LabelAt(Body,'輪郭',108,280,22); L.Width:=D(56);
+  FContour:=TComboBox.Create(Self); FContour.Parent:=Body; FContour.SetBounds(D(172),D(276),D(110),D(28));
   FContour.Style:=csDropDownList; FContour.Items.AddStrings(['通常','ギザギザ','波線','雲形']); FContour.ItemIndex:=0;
   FContour.Hint:='基本形状を保った輪郭。選択するとすぐに反映。'; FContour.ShowHint:=True;
-  LabelAt(Body,'縁の太さ（出力px）',12,626,24);
-  FBorderWidth:=TComboBox.Create(Self); FBorderWidth.Parent:=Body; FBorderWidth.SetBounds(D(12),D(654),D(96),D(28));
+  LabelAt(Body,'線幅 (px)',12,314,22); L.Width:=D(88);
+  FBorderWidth:=TComboBox.Create(Self); FBorderWidth.Parent:=Body; FBorderWidth.SetBounds(D(104),D(310),D(64),D(28));
   FBorderWidth.Style:=csDropDownList; FBorderWidth.Items.AddStrings(['0','1','2','3','4','6','8','12']); FBorderWidth.ItemIndex:=3;
   // 全コントロールの初期化後に接続し、読込による表示更新を編集として保存しない。
   FText.OnChange:=BalloonSettingsChanged; FText.OnEnter:=MemoFocusChanged; FText.OnExit:=MemoFocusChanged;
@@ -200,10 +204,11 @@ begin
   FFontItalic.OnClick:=BalloonSettingsChanged; FFontUnderline.OnClick:=BalloonSettingsChanged;
   FFontStrikeOut.OnClick:=BalloonSettingsChanged; FContour.OnChange:=BalloonSettingsChanged;
   FBorderWidth.OnChange:=BalloonSettingsChanged;
-  ColorButton:=TButton.Create(Self); ColorButton.Parent:=Body; ColorButton.SetBounds(D(114),D(650),D(78),D(34)); ColorButton.Caption:='塗り色'; ColorButton.Tag:=1; ColorButton.OnClick:=ChooseTextColor;
-  ColorButton:=TButton.Create(Self); ColorButton.Parent:=Body; ColorButton.SetBounds(D(204),D(650),D(78),D(34)); ColorButton.Caption:='縁色'; ColorButton.Tag:=2; ColorButton.OnClick:=ChooseTextColor;
-  Body.VertScrollBar.Range:=D(748);
-  Tab:=TabSheet('漫画効果'); P:=TPanel.Create(Self); P.Parent:=Tab; P.Align:=alTop; P.Height:=D(54); P.BevelOuter:=bvNone;
+  ColorButton:=TButton.Create(Self); ColorButton.Parent:=Body; ColorButton.SetBounds(D(174),D(310),D(50),D(28)); ColorButton.Caption:='塗り'; ColorButton.Tag:=1; ColorButton.OnClick:=ChooseTextColor;
+  ColorButton:=TButton.Create(Self); ColorButton.Parent:=Body; ColorButton.SetBounds(D(232),D(310),D(50),D(28)); ColorButton.Caption:='線色'; ColorButton.Tag:=2; ColorButton.OnClick:=ChooseTextColor;
+  // 小さいウィンドウ用のスクロール機構は残し、通常寸法では全設定を1画面へ収める。
+  Body.VertScrollBar.Range:=D(422);
+  Tab:=TabSheet('漫画効果'); P:=TPanel.Create(Self); P.Parent:=Tab; P.Align:=alTop; P.Height:=D(54); P.BevelOuter:=bvLowered; P.BevelWidth:=1;
   FEffectCategory:=TComboBox.Create(Self); FEffectCategory.Parent:=P; FEffectCategory.SetBounds(D(10),D(12),D(270),D(28));
   FEffectCategory.Style:=csDropDownList; FEffectCategory.Items.AddStrings(['効果素材','フィルター','枠装飾']); FEffectCategory.ItemIndex:=0; FEffectCategory.OnChange:=EffectCategoryChanged;
   FEffectPages:=TPageControl.Create(Self); FEffectPages.Parent:=Tab; FEffectPages.Align:=alClient;
@@ -229,7 +234,8 @@ begin
   Icon(Body,'枠設定を反映',12,164,268,40,ciPanelEdit,0,brApplyFrame,ApplyFrame,True);
   Icon(Body,'枠設定を初期化',12,218,268,40,ciDelete,2,brDeleteEffect,DeleteEffect,True); Body.VertScrollBar.Range:=D(270);
   FEffectPages.ActivePageIndex:=0;
-  FView:=TComicView.Create(Self); FView.Parent:=Self; FView.Align:=alClient; FView.BevelOuter:=bvNone;
+  TabSheet('画像管理');
+  FView:=TComicView.Create(Self); FView.Parent:=FWorkspaceHost; FView.Align:=alClient; FView.BevelOuter:=bvNone;
   FView.Color:=$302B28; FView.ParentBackground:=False; FView.DoubleBuffered:=True;
   FView.ImeMode:=imDisable; FView.TabStop:=True; FView.OnCaptureLost:=ViewCaptureLost;
   OnMouseWheel:=ViewWheel;

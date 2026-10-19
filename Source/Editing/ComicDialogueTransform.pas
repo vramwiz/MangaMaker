@@ -9,7 +9,7 @@ type
     HasX,HasY: Boolean;
   end;
 function SnapDialogueCenter(const Candidate,Frame: TRectF; Tolerance: Double): TComicDialogueSnap;
-function HitDialogueHandle(const Bounds: TRectF; const P: TPointF; Scale: Double): Integer;
+function HitDialogueHandle(const Bounds: TRectF; const P: TPointF; Scale: Double; PPI: Integer=96): Integer;
 function TransformDialogue(Balloon: TComicBalloon; Renderer: TComicRenderer;
   const Source: TComicBalloonTransform; const Original: TRectF;
   const Delta: TPointF; Handle: Integer): Boolean;
@@ -25,11 +25,11 @@ begin
   if not Result.HasX then DX:=0; if not Result.HasY then DY:=0;
   Result.Bounds.Offset(DX,DY);
 end;
-function HitDialogueHandle(const Bounds: TRectF; const P: TPointF; Scale: Double): Integer;
+function HitDialogueHandle(const Bounds: TRectF; const P: TPointF; Scale: Double; PPI: Integer): Integer;
 var Interior: TRectF; Handles: TArray<TPointF>; I: Integer; Best,Distance,Tolerance: Double;
 begin
   // 小さい文字でも表示された編集点の間は移動・入力に使えるよう、余白判定より内側を優先する。
-  Scale:=Max(0.001,Scale); Interior:=Bounds; Interior.Inflate(-4/Scale,-4/Scale);
+  Scale:=Max(0.001,Scale)*96/Max(1,PPI); Interior:=Bounds; Interior.Inflate(-4/Scale,-4/Scale);
   if not Interior.IsEmpty and Interior.Contains(P) then Exit(0);
   Result:=0; if Bounds.IsEmpty then Exit; Handles:=EditHandles(Bounds); Best:=MaxDouble; Tolerance:=9/Scale;
   for I:=0 to High(Handles) do

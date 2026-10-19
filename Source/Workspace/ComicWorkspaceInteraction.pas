@@ -41,7 +41,7 @@ begin
   Result:=-1;
   if (Page=nil) or (P.X<0) or (P.Y<0) or (P.X>=FProject.Width) or (P.Y>=FProject.Height) then Exit;
   if (FBalloonIndex>=0) and (FBalloonIndex<Page.Balloons.Count) and
-    (HitHandle(Page.Balloons[FBalloonIndex].Bounds,P,9/Max(0.001,FScale))<>0) then Exit;
+    (HitHandle(Page.Balloons[FBalloonIndex].Bounds,P,MulDiv(9,CurrentPPI,96)/Max(0.001,FScale))<>0) then Exit;
   for I:=Page.Balloons.Count-1 downto 0 do begin
     Balloon:=Page.Balloons[I]; Visible:=True;
     if not Balloon.Overflow then for Panel in Page.Panels do if Panel.ID=Balloon.PanelID then begin
@@ -87,7 +87,7 @@ begin
   if (FTool=0) and (HitDialogue(P)>=0) then begin FCanvas.Cursor:=crSizeAll; Exit; end;
   if FTool=14 then begin
     if InlineTextActive then begin
-      R:=Page.Balloons[FBalloonIndex].Bounds; Handle:=HitHandle(R,P,9/Max(0.001,FScale));
+      R:=Page.Balloons[FBalloonIndex].Bounds; Handle:=HitHandle(R,P,MulDiv(9,CurrentPPI,96)/Max(0.001,FScale));
       if Handle>0 then FCanvas.Cursor:=Cursors[Handle]
       else if FRenderer.BalloonTextBounds(FInlineText.Preview).Contains(P) then FCanvas.Cursor:=crIBeam
       else if HitBalloon(P)>=0 then FCanvas.Cursor:=crSizeAll;
@@ -98,8 +98,8 @@ begin
   R:=Page.Balloons[FBalloonIndex].Bounds;
   if FTool=13 then R:=FRenderer.BalloonTextBounds(Page.Balloons[FBalloonIndex]);
   // 表示の8点と同じ判定・優先順位を使い、実際に押下できる位置でカーソルを変える。
-  Handle:=HitHandle(R,P,9/Max(0.001,FScale));
-  if FTool=13 then Handle:=HitDialogueHandle(R,P,FScale);
+  Handle:=HitHandle(R,P,MulDiv(9,CurrentPPI,96)/Max(0.001,FScale));
+  if FTool=13 then Handle:=HitDialogueHandle(R,P,FScale,CurrentPPI);
   if FDragging then Handle:=FDragHandle;
   if Handle>0 then FCanvas.Cursor:=Cursors[Handle]
   else if FDragging or ((FTool=0) and (HitBalloon(P)=FBalloonIndex)) or
@@ -132,9 +132,9 @@ begin
   if Button<>mbLeft then Exit; P:=ToPage(X,Y);
   if (FTabs.ActivePageIndex=3) and (FTool=14) then begin
     R:=TRectF.Empty;
-    if InlineTextActive then begin R:=FRenderer.BalloonTextBounds(FInlineText.Preview); R.Inflate(3/FScale,3/FScale); end;
+    if InlineTextActive then begin R:=FRenderer.BalloonTextBounds(FInlineText.Preview); R.Inflate(MulDiv(3,CurrentPPI,96)/FScale,MulDiv(3,CurrentPPI,96)/FScale); end;
     if InlineTextActive and R.Contains(P) and
-      (HitHandle(Page.Balloons[FBalloonIndex].Bounds,P,9/FScale)=0) then begin
+      (HitHandle(Page.Balloons[FBalloonIndex].Bounds,P,MulDiv(9,CurrentPPI,96)/FScale)=0) then begin
       FInlineText.PlaceCaret(P,ssShift in Shift); FInlineText.FocusInput;
       FInlineSelecting:=True; if not FTesting then FCanvas.MouseCapture:=True; Exit;
     end;
@@ -158,7 +158,7 @@ begin
     if FBalloonIndex>=0 then begin
       Balloon:=Page.Balloons[FBalloonIndex]; FDragBounds:=FRenderer.BalloonTextBounds(Balloon);
       if (Balloon.Text='') and (HitBalloon(P)=FBalloonIndex) then begin BeginTextInput(nil); Exit; end;
-      FDragHandle:=HitDialogueHandle(FDragBounds,P,FScale);
+      FDragHandle:=HitDialogueHandle(FDragBounds,P,FScale,CurrentPPI);
       if FDialogueJustSelected then FDragHandle:=0;
       if (FDragHandle<>0) or FDragBounds.Contains(P) then begin
         FDragSnapshot:=FProject.Snapshot;
@@ -182,7 +182,7 @@ begin
       if FTabs.ActivePageIndex=1 then Selected:=SelectedPanelBounds;
       if FTabs.ActivePageIndex=2 then Selected:=FRenderer.ImageBounds(FProject,Page.Panels[FPanelIndex]);
     end;
-    Handle:=HitHandle(Selected,P,9/FScale);
+    Handle:=HitHandle(Selected,P,MulDiv(9,CurrentPPI,96)/FScale);
     GroupMove:=(FTabs.ActivePageIndex=1) and (Length(SelectedPanelIDs)>1) and Selected.Contains(P) and (HitPanel(P)<0);
     if (Handle=0) and (FTabs.ActivePageIndex=1) and (FPanelIndex>=0) and (FPanelIndex<Page.Panels.Count) and (Length(SelectedPanelIDs)<=1) then
       FDragVertex:=HitVertex(Page.Panels[FPanelIndex],P);
@@ -224,7 +224,7 @@ begin
   FDragSnapshot:=FProject.Snapshot; FDragMoved:=False; FDragging:=True;
   if not FTesting then FCanvas.MouseCapture:=True;
   FStart:=P; FLast:=P;
-  FDragHandle:=HitHandle(FDragBounds,P,9/FScale);
+  FDragHandle:=HitHandle(FDragBounds,P,MulDiv(9,CurrentPPI,96)/FScale);
   UpdateIconState; FCanvas.Invalidate;
 end;
 

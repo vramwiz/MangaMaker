@@ -11,7 +11,7 @@ uses Winapi.Windows, Winapi.Messages, Winapi.ShellAPI, Winapi.Imm,
   System.Hash, System.DateUtils, Vcl.Controls, Vcl.Forms,
   Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.ComCtrls, Vcl.Menus,
   Vcl.Dialogs, Vcl.Graphics, Vcl.Imaging.pngimage, ComicModel,
-  ComicAssetDialog, ComicLayouts, ComicExport, ComicEditingTests,
+  ComicAssetDialog, ComicLayouts, ComicExport, ComicEditingTests, ComicAssetWorkspaceTests,
   ComicGeometryTests, ComicImageLayoutTests, ComicTextTests, ComicInlineTextTests, ComicBalloonsTests, ComicAssetsTests,
   ComicIntegrationTests, ComicLibrariesTests, ComicRenderingTests, ComicWorkspaceTests, ComicMaterialPaneTests, ComicScriptTests, ComicAssetDialogTests, ComicPlacementTests, ComicEffectRotationTests, ComicPageResizeTests, ComicDragDropTests, ComicBalloonSelectionTests, ComicPageRefreshTests, ComicPageDefaultsTests;
 type
@@ -26,6 +26,10 @@ begin
   ForceDirectories(TestFolder); B:=TBitmap.Create; Lines:=TStringList.Create;
   try
     Check(not HasCharacter,'empty library blocks production');
+    Check((FProject=nil) and not FPages.Parent.Visible and not FWorkspaceHost.Visible and not FStatus.Visible,
+      'startup without a project hides page list workspace and status');
+    Check((Menu<>nil) and Menu.Items.Visible,'startup keeps the main menu available for new and open');
+    Capture('startup-empty');
     B.SetSize(700,440); B.Canvas.Brush.Color:=$E9C193; B.Canvas.FillRect(Rect(0,0,700,440));
     B.Canvas.Brush.Color:=$997752; B.Canvas.Ellipse(120,50,500,430); B.SaveToFile(TPath.Combine(TestFolder,'reference.bmp'));
     A:=TComicAsset.Create; A.Name:='テスト人物'; A.FileName:='reference.bmp'; FCharacters.Add(A);
@@ -35,6 +39,7 @@ begin
     WriteAssets(FCharacters,TPath.Combine(DataRoot,'Characters\Library.json'));
     RunPageRefreshChecks(Self);
     RunPageDefaultsChecks(Self);
+    RunAssetWorkspaceChecks(Self);
     RunSafetyChecks(Self);
     RunScriptChecks(Self);
     FProject:=CreateFixtureProject; FProject.Initialize('保存テスト・日本語','第1話'); FPageIndex:=0;

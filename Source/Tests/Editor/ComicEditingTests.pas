@@ -78,9 +78,11 @@ procedure TComicEditingTestsHelper.EditingChecks;
       (Page.Panels[0].PanY=OldPanY),'image resize undo restores zoom and position together');
     FPanelIndex:=0; X:=FPageRect.Left+Round((Original.Left+Original.Right)/2*FScale);
     Y:=FPageRect.Top+Round((Original.Top+Original.Bottom)/2*FScale);
-    MouseDown(FCanvas,mbLeft,[],X,Y); MouseMove(FCanvas,[ssLeft],X+25,Y+10); MouseUp(FCanvas,mbLeft,[],X+25,Y+10);
+    // 画像パン自体の確認なので、DPIで変わる吸着許容幅から独立させる。スナップは専用回帰で確認する。
+    MouseDown(FCanvas,mbLeft,[],X,Y); MouseMove(FCanvas,[ssLeft,ssAlt],X+25,Y+10); MouseUp(FCanvas,mbLeft,[ssAlt],X+25,Y+10);
     Check((Page.Panels[0].Bounds=Original) and (Page.Panels[0].PanX>OldPanX) and
-      (Page.Panels[0].PanY>OldPanY),'image drag pans without moving the panel'); Undo(nil);
+      (Page.Panels[0].PanY>OldPanY),Format('image drag pans without moving the panel [pan=%f,%f old=%f,%f scale=%f dpi=%d handle=%d]',
+        [Page.Panels[0].PanX,Page.Panels[0].PanY,OldPanX,OldPanY,FScale,CurrentPPI,FDragHandle])); Undo(nil);
     FTabs.ActivePageIndex:=3; TabChanged(nil); FBalloonIndex:=0; FPanelIndex:=0;
     Original:=Page.Balloons[0].Bounds; ID:=Page.Balloons[0].PanelID;
     TailRatioX:=(Page.Balloons[0].TailX-Original.Left)/Original.Width;
@@ -109,8 +111,11 @@ procedure TComicEditingTestsHelper.EditingChecks;
     Check(InlineTextActive and not FDragging and (FInlineText.Input.ImeMode=imOpen),
       'real VCL double-click then ssDouble MouseDown preserves inline input session');
     FinishInlineText(False);
-    ActiveControl:=FText; KeyValue:=VK_ESCAPE; Key(Self,KeyValue,[]);
-    Check(KeyValue=VK_ESCAPE,'IME editor keeps its own Esc handling'); ActiveControl:=nil;
+    FText.Visible:=True;
+    try
+      ActiveControl:=FText; KeyValue:=VK_ESCAPE; Key(Self,KeyValue,[]);
+      Check(KeyValue=VK_ESCAPE,'retained IME editor keeps its own Esc handling');
+    finally ActiveControl:=nil; FText.Visible:=False; end;
     FTabs.ActivePageIndex:=0; TabChanged(nil);
   end;
 

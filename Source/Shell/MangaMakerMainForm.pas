@@ -63,7 +63,7 @@ type
     FRecentMenu,FRecentEmpty,FRecentClear: TMenuItem;
     FSaveMenu,FUndoMenu,FRedoMenu,FExportMenu,FImagesMenu: TMenuItem;
     FFitMenu,FNextModeMenu,FPreviousModeMenu: TMenuItem;
-    FModeMenu: array[0..4] of TMenuItem;
+    FModeMenu: array[0..5] of TMenuItem;
     FRecentItems: array[0..19] of TMenuItem;
     FProject: TComicProject;
     FCharacters: TObjectList<TComicAsset>;
@@ -83,6 +83,9 @@ type
     FCanvas: TComicPaintBox;
     FView: TComicView;
     FTabs: TPageControl;
+    FWorkspaceHost,FToolsPanel: TPanel;
+    FImageWorkspace: TAssetDialog;
+    FImageWorkspaceBefore: string;
     FStatus: TStatusBar;
     FText: TMemo;
     FInlineText: TComicInlineText;
@@ -123,7 +126,7 @@ type
     FDragPlacementMenu: TMenuItem;
     FTesting: Boolean;
     FIconButtons: TList<TComicIconButton>;
-    FModeButtons: array[0..4] of TComicIconButton;
+    FModeButtons: array[0..5] of TComicIconButton;
     FModeTitle: TLabel;
     FDragZoom: Double;
     FDragEffectAngle: Double;
@@ -143,6 +146,12 @@ type
     FImageSnap: TComicImageSnap;
     FSelectedPanels: TList<string>;
     FDragGroup: TArray<TComicPanelTransform>;
+    procedure CommitImageWorkspace;
+    procedure CloseImageWorkspace;
+    procedure OpenImageWorkspace;
+    procedure DoBeforeMonitorDpiChanged(OldDPI,NewDPI: Integer); override;
+    procedure DoAfterMonitorDpiChanged(OldDPI,NewDPI: Integer); override;
+    procedure CMFocusChanged(var Message: TCMFocusChanged); message CM_FOCUSCHANGED;
     function GenerationSnapshot(const LibraryName,ProjectID,AssetID: string; out References: TArray<string>): string;
     function GenerationTargetMatches(Job: TComicGenerationJob): Boolean;
     procedure GenerateAsset(Sender: TObject);
@@ -306,10 +315,26 @@ var
   MainForm: TMainForm;
 
 implementation
-uses ComicPageResize, ComicEffectSelection, ComicScriptAssist, ComicScript, ComicWorkspaceUI, ComicWorkspaceBridge, ComicWorkspaceGeneration, ComicWorkspaceViewport, ComicWorkspaceGeometry, ComicWorkspaceInteraction, ComicWorkspaceBalloons, ComicWorkspaceEffects
+uses ComicPageResize, ComicEffectSelection, ComicScriptAssist, ComicScript, ComicWorkspaceUI, ComicWorkspaceBridge, ComicWorkspaceGeneration, ComicWorkspaceViewport, ComicWorkspaceGeometry, ComicWorkspaceInteraction, ComicWorkspaceBalloons, ComicWorkspaceEffects, ComicWorkspaceAssets, ComicImeFocus
   {$IFDEF DEBUG}, ComicPerformance{$ENDIF};
 
 {$R *.dfm}
+
+procedure TMainForm.CommitImageWorkspace;
+begin CommitWorkspaceAssets(Self); end;
+procedure TMainForm.CloseImageWorkspace;
+begin CloseWorkspaceAssets(Self); end;
+procedure TMainForm.OpenImageWorkspace;
+begin OpenWorkspaceAssets(Self); end;
+procedure TMainForm.DoBeforeMonitorDpiChanged(OldDPI,NewDPI: Integer);
+begin if FCanvas<>nil then CancelDrag; inherited; end;
+procedure TMainForm.DoAfterMonitorDpiChanged(OldDPI,NewDPI: Integer);
+begin inherited; WorkspaceDpiChanged(Self); end;
+procedure TMainForm.CMFocusChanged(var Message: TCMFocusChanged);
+begin
+  inherited;
+  if not (csDestroying in ComponentState) then CloseControlIme(Message.Sender);
+end;
 
 procedure TComicView.WndProc(var Message: TMessage);
 begin
@@ -383,7 +408,7 @@ begin
 end;
 destructor TMainForm.Destroy;
 // タイマーと所有する生成要求を先に止め、遅延コールバックが解放済みのUI・作品へ触れないようにする。
-begin FreeAndNil(FInlineText); FreeAndNil(FEffectPane); FEffectList:=nil; if FGenerationTimer<>nil then FGenerationTimer.Enabled:=False; CancelGeneration(nil); FGenerationJobs.Free; FGenerationJobs:=nil; if FView<>nil then FView.OnCaptureLost:=nil; EndViewPan(False); FBridge.Free; FProject.Free; FCharacters.Free; FRenderer.Free; FUndo.Free; FRedo.Free; FLayouts.Free; FPagePresets.Free; FFontHistory.Free; FGenerationPresets.Free; FEffectMaterials.Free; FRecent.Free; FIconButtons.Free; FGeometryPoints.Free; FSelectedPanels.Free; inherited; end;
+begin FreeAndNil(FImageWorkspace); FAssetManager:=nil; FreeAndNil(FInlineText); FreeAndNil(FEffectPane); FEffectList:=nil; if FGenerationTimer<>nil then FGenerationTimer.Enabled:=False; CancelGeneration(nil); FGenerationJobs.Free; FGenerationJobs:=nil; if FView<>nil then FView.OnCaptureLost:=nil; EndViewPan(False); FBridge.Free; FProject.Free; FCharacters.Free; FRenderer.Free; FUndo.Free; FRedo.Free; FLayouts.Free; FPagePresets.Free; FFontHistory.Free; FGenerationPresets.Free; FEffectMaterials.Free; FRecent.Free; FIconButtons.Free; FGeometryPoints.Free; FSelectedPanels.Free; inherited; end;
 procedure TMainForm.BridgeRequest(const Request: string; out Reply: string);
 begin HandleWorkspaceBridge(Self,Request,Reply); end;
 procedure TMainForm.RefreshEffectMaterials;
@@ -419,8 +444,11 @@ begin
   if InlineTextActive then Exit;
   if not Enabled or (HandleAllocated and not IsWindowEnabled(Handle)) or
     (Application.ModalLevel>0) then Exit;
-  if (Screen.ActiveCustomForm<>nil) and (Screen.ActiveCustomForm<>Self) then Exit;
+  if (Screen.ActiveCustomForm<>nil) and (Screen.ActiveCustomForm<>Self) and
+    (Screen.ActiveCustomForm<>FImageWorkspace) then Exit;
   Control:=ActiveControl;
+  if (FImageWorkspace<>nil) and (Screen.ActiveCustomForm=FImageWorkspace) and
+    (FImageWorkspace.ActiveControl<>nil) then Control:=FImageWorkspace.ActiveControl;
   if Control is TCustomEdit then Exit;
   if (Control is TCustomComboBox) and (TComboBox(Control).Style<>csDropDownList) then Exit;
   Window:=Winapi.Windows.GetFocus;
@@ -469,12 +497,13 @@ function TMainForm.ConfirmLeave: Boolean;
 var R: Integer;
 begin
   CancelDrag;
-  Result:=True; if not FDirty then Exit;
+  CommitImageWorkspace; Result:=True; if not FDirty then Exit;
   R:=MessageDlg('作品に未保存の変更があります。保存しますか？',mtConfirmation,[mbYes,mbNo,mbCancel],0);
   if R=mrCancel then Exit(False); if R=mrYes then SaveProject(nil);
 end;
 procedure TMainForm.Checkpoint;
 begin
+  CloseImageWorkspace;
   CancelDrag;
   if FProject=nil then Exit; FUndo.Add(FProject.Snapshot); FRedo.Clear;
   if FUndo.Count>40 then FUndo.Delete(0);
@@ -498,6 +527,9 @@ begin
       Caption:=FProject.Title+'  /  '+FProject.Episode+' — MangaMaker'; if FDirty then Caption:='* '+Caption;
     end else Caption:='MangaMaker — AI漫画スタジオ';
     FTabs.Enabled:=FProject<>nil;
+    // 作品確定後に編集領域をまとめて表示し、未作成時はメニューだけを残す。
+    FPages.Parent.Visible:=FProject<>nil;
+    FWorkspaceHost.Visible:=FProject<>nil; FStatus.Visible:=FProject<>nil;
     if (FProject=nil) and not HasCharacter then FStatus.SimpleText:='はじめに［キャラ管理］で人物名と参照画像を登録してください。'
     else if FProject=nil then FStatus.SimpleText:='［新規作品］で作品タイトルと話数を入力してください。'
     else if FImages.Count=0 then FStatus.SimpleText:='［画像管理］で場面を追加し、画像を登録してください。'
@@ -509,8 +541,14 @@ end;
 procedure TMainForm.ModeClick(Sender: TObject);
 begin
   if not FTabs.Enabled then Exit;
+  if (TComponent(Sender).Tag=5) and not HasCharacter then begin Notify('参照画像付きのキャラを先に登録してください。'); Exit; end;
+  CancelDrag;
+  if TComponent(Sender).Tag<>5 then CloseImageWorkspace;
   FTabs.ActivePageIndex:=TComponent(Sender).Tag; TabChanged(nil);
-  if Sender is TWinControl then ActiveControl:=TWinControl(Sender) else ActiveControl:=FView;
+  if Sender is TWinControl then ActiveControl:=TWinControl(Sender)
+  else if FImageWorkspace<>nil then begin
+    if FImageWorkspace.Showing then FImageWorkspace.ActiveControl:=FImageWorkspace.AssetTree;
+  end else ActiveControl:=FView;
   FStatus.SimpleText:=FTabs.ActivePage.Caption+'：右側のアイコンや一覧から操作を選択してください。';
 end;
 procedure TMainForm.ButtonHelp(Sender: TObject);
@@ -577,7 +615,7 @@ begin
       ((Button.Role in [brTool,brTail,brTextPlacement]) and (Button.Context=FTabs.ActivePageIndex) and (Button.Tag=FTool));
   end;
   FSaveMenu.Enabled:=CanEdit; FExportMenu.Enabled:=CanEdit; FImagesMenu.Enabled:=CanEdit;
-  FUndoMenu.Enabled:=CanEdit and (FUndo.Count>0); FRedoMenu.Enabled:=CanEdit and (FRedo.Count>0);
+  FUndoMenu.Enabled:=CanEdit and ((FUndo.Count>0) or (FImageWorkspace<>nil)); FRedoMenu.Enabled:=CanEdit and (FRedo.Count>0);
   FFitMenu.Enabled:=CanEdit; FNextModeMenu.Enabled:=CanEdit; FPreviousModeMenu.Enabled:=CanEdit;
   for I:=0 to High(FModeMenu) do begin FModeMenu[I].Enabled:=CanEdit; FModeMenu[I].Checked:=FTabs.ActivePageIndex=I; end;
   FModeTitle.Caption:=FTabs.ActivePage.Caption;
@@ -654,7 +692,7 @@ var Before,Prepared: string; WasDirty: Boolean;
 begin
   if not Basis.Valid then raise Exception.Create('出力解像度またはページ外枠の余白が不正です。');
   if (FProject=nil) or FProject.PageBasis.Same(Basis) then Exit;
-  CancelDrag; Before:=FProject.Snapshot; WasDirty:=FDirty;
+  CloseImageWorkspace; CancelDrag; Before:=FProject.Snapshot; WasDirty:=FDirty;
   Prepared:=PreparePageBasisChange(FProject,Basis);
   ResetGeometryInput; FFirst:=False; FTool:=0;
   try
@@ -686,7 +724,7 @@ begin
 end;
 procedure TMainForm.AdoptProject(Project: TComicProject; Dirty: Boolean);
 begin
-  CancelGeneration(nil); CancelDrag; ResetGeometryInput;
+  CloseImageWorkspace; CancelGeneration(nil); CancelDrag; ResetGeometryInput;
   FFirst:=False; FTool:=0; FNumber:=1; FDragVertex:=-1;
   FSelectedPanels.Clear; FDragGroup:=nil; FEffectIndex:=-1;
   FDragVertices:=nil; FDragSnapshot:=''; FPageDropIndex:=-1;
@@ -715,7 +753,7 @@ end;
 procedure TMainForm.OpenScript(Sender: TObject);
 var D: TOpenDialog; Before,Text,Title: string; P: TComicProject; Script: TComicScript; Imported: TScriptImportResult;
 begin
-  CancelDrag;
+  CloseImageWorkspace; CancelDrag;
   D:=TOpenDialog.Create(Self);
   try
     D.Filter:='台本テキスト (*.txt)|*.txt'; D.Options:=[ofFileMustExist,ofPathMustExist,ofNoChangeDir,ofEnableSizing];
@@ -753,7 +791,7 @@ end;
 procedure TMainForm.SaveProject(Sender: TObject);
 {$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
 begin
-  {$IFDEF DEBUG}PerfScope.Start(cpSave);{$ENDIF} CancelDrag; if FProject=nil then Exit; FProject.Save; FDirty:=False; RefreshUI; FStatus.SimpleText:='保存しました：'+FProject.Folder;
+  {$IFDEF DEBUG}PerfScope.Start(cpSave);{$ENDIF} CancelDrag; CommitImageWorkspace; if FProject=nil then Exit; FProject.Save; FDirty:=False; RefreshUI; FStatus.SimpleText:='保存しました：'+FProject.Folder;
   RememberProject(TPath.Combine(FProject.Folder,'Project.json')); end;
 procedure TMainForm.OpenProjectFile(const FileName: string; DraftChoice: Integer);
 {$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
@@ -803,6 +841,7 @@ begin if not FRecentWritable then Exit; FRecent.Clear(TPath.Combine(DataRoot,'Pr
 procedure TMainForm.Characters(Sender: TObject);
 var D: TAssetDialog;
 begin
+  CloseImageWorkspace;
   if not FCharacterLibraryWritable then
     try ReadAssets(FCharacters,TPath.Combine(DataRoot,'Characters\Library.json')); NormalizeCharacters(FCharacters); FCharacterLibraryWritable:=True;
     except on E: Exception do if not FTesting then Notify(E.Message); end;
@@ -811,17 +850,10 @@ begin
   try D.ShowModal; finally CancelGeneration(D); FAssetManager:=nil; D.Free; end; RefreshUI;
 end;
 procedure TMainForm.Images(Sender: TObject);
-var D: TAssetDialog; Before: string;
 begin
   CancelDrag;
   if not NeedProject then Exit;
-  if not HasCharacter then begin Notify('参照画像付きのキャラを先に登録してください。'); Exit; end;
-  Before:=FProject.Snapshot;
-  D:=TAssetDialog.CreateManager(Self,FProject.Assets,FProject,False,True,GenerationPresets,FCharacters,GenerateAsset,CancelGeneration,GenerateScript);
-  FAssetManager:=D;
-  try
-    D.ShowModal; FinishImageManagement(Before,True);
-  finally CancelGeneration(D); FAssetManager:=nil; D.Free; end;
+  FModeButtons[5].Click;
 end;
 procedure TMainForm.FinishImageManagement(const Before: string; AlreadyPersisted: Boolean);
 begin
@@ -863,9 +895,21 @@ begin
   Checkpoint; FProject.Pages.Move(FPageIndex,Dest); FPageIndex:=Dest; Changed(False);
 end;
 procedure TMainForm.PageSelect(Sender: TObject);
-begin if FRefreshing then Exit; CancelGeneration(nil); CancelDrag; ResetGeometryInput; FSelectedPanels.Clear; FPageIndex:=FPages.ItemIndex; ResetViewport; FPanelIndex:=-1; FBalloonIndex:=-1; FFirst:=False; ShowPageStatus; UpdateIconState; FCanvas.Invalidate; end;
+var Index: Integer;
+begin if FRefreshing then Exit; Index:=FPages.ItemIndex; CloseImageWorkspace; CancelGeneration(nil); CancelDrag; ResetGeometryInput; FSelectedPanels.Clear; FPageIndex:=Index; ResetViewport; FPanelIndex:=-1; FBalloonIndex:=-1; FFirst:=False; ShowPageStatus; UpdateIconState; FCanvas.Invalidate; end;
 procedure TMainForm.TabChanged(Sender: TObject);
-begin CancelDrag; ResetGeometryInput; FSelectedPanels.Clear; FEffectIndex:=-1; FTool:=0; FFirst:=False; if FTabs.ActivePageIndex=3 then FPanelIndex:=-1 else FBalloonIndex:=-1; UpdateIconState; FCanvas.Invalidate; end;
+begin
+  CancelDrag;
+  try
+    if FTabs.ActivePageIndex=5 then OpenImageWorkspace else CloseImageWorkspace;
+  except
+    if FImageWorkspace<>nil then FTabs.ActivePageIndex:=5;
+    UpdateIconState; raise;
+  end;
+  ResetGeometryInput; FSelectedPanels.Clear; FEffectIndex:=-1; FTool:=0; FFirst:=False;
+  if FTabs.ActivePageIndex=3 then FPanelIndex:=-1 else FBalloonIndex:=-1;
+  UpdateIconState; FCanvas.Invalidate;
+end;
 procedure TMainForm.DrawPageItem(Control: TWinControl; Index: Integer; Rect: TRect; State: TOwnerDrawState);
 {$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
 var R: TRect; B: TBitmap; I: Integer;
@@ -886,7 +930,7 @@ procedure TMainForm.Undo(Sender: TObject);
 {$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
 var P: TComicPage;
 begin
-  {$IFDEF DEBUG}PerfScope.Start(cpUndo);{$ENDIF}
+  {$IFDEF DEBUG}PerfScope.Start(cpUndo);{$ENDIF} CloseImageWorkspace;
   CancelDrag;
   ResetGeometryInput;
   if (FProject=nil) or (FUndo.Count=0) then Exit;
@@ -900,7 +944,7 @@ procedure TMainForm.Redo(Sender: TObject);
 {$IFDEF DEBUG}var PerfScope: TComicPerfScope;{$ENDIF}
 var P: TComicPage;
 begin
-  {$IFDEF DEBUG}PerfScope.Start(cpRedo);{$ENDIF}
+  {$IFDEF DEBUG}PerfScope.Start(cpRedo);{$ENDIF} CloseImageWorkspace;
   CancelDrag;
   ResetGeometryInput;
   if (FProject=nil) or (FRedo.Count=0) then Exit;
@@ -1150,7 +1194,7 @@ begin
     C.Brush.Style:=bsSolid; C.Brush.Color:=$E5B45B;
     for HandlePoint in EditHandles(B) do begin
       HX:=FPageRect.Left+Round(HandlePoint.X*FScale); HY:=FPageRect.Top+Round(HandlePoint.Y*FScale);
-      C.FillRect(Rect(HX-4,HY-4,HX+5,HY+5));
+      C.FillRect(Rect(HX-MulDiv(4,CurrentPPI,96),HY-MulDiv(4,CurrentPPI,96),HX+MulDiv(5,CurrentPPI,96),HY+MulDiv(5,CurrentPPI,96)));
     end;
     C.Pen.Width:=1;
   end;
@@ -1158,14 +1202,15 @@ begin
     C.Brush.Color:=$60D6FF; C.Pen.Color:=$202020; C.Brush.Style:=bsSolid;
     for HandlePoint in VertexHandles(Page.Panels[FPanelIndex]) do begin
       HX:=ScreenPoint(HandlePoint).X; HY:=ScreenPoint(HandlePoint).Y;
-      C.Rectangle(HX-4,HY-4,HX+5,HY+5);
+      C.Rectangle(HX-MulDiv(4,CurrentPPI,96),HY-MulDiv(4,CurrentPPI,96),HX+MulDiv(5,CurrentPPI,96),HY+MulDiv(5,CurrentPPI,96));
     end;
   end;
   if (FTabs.ActivePageIndex=3) and (FTool=12) and (FBalloonIndex>=0) and (FTailIndex>=0) and
     (FTailIndex<Page.Balloons[FBalloonIndex].Tails.Count) then begin
     C.Brush.Color:=$60D6FF;
     for HandlePoint in Page.Balloons[FBalloonIndex].Tails[FTailIndex].Handles do begin
-      HX:=ScreenPoint(HandlePoint).X; HY:=ScreenPoint(HandlePoint).Y; C.FillRect(Rect(HX-4,HY-4,HX+5,HY+5));
+      HX:=ScreenPoint(HandlePoint).X; HY:=ScreenPoint(HandlePoint).Y;
+      C.FillRect(Rect(HX-MulDiv(4,CurrentPPI,96),HY-MulDiv(4,CurrentPPI,96),HX+MulDiv(5,CurrentPPI,96),HY+MulDiv(5,CurrentPPI,96)));
     end;
   end;
   IDs:=SelectedPanelIDs;

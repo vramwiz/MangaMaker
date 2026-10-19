@@ -4,7 +4,7 @@
 
 interface
 
-uses System.SysUtils, System.Classes, System.Generics.Collections, Vcl.Forms, Vcl.Controls,
+uses ComicDpi, System.SysUtils, System.Classes, System.Generics.Collections, Vcl.Forms, Vcl.Controls,
   Vcl.StdCtrls, Vcl.ExtCtrls, ComicGenerationPresets;
 
 type
@@ -47,7 +47,7 @@ var Left,Right,Bar: TPanel; LabelControl: TLabel; Button: TButton;
   procedure AddButton(const Caption: string; X,W: Integer; Handler: TNotifyEvent; Enabled: Boolean);
   begin Button:=TButton.Create(Self); Button.Parent:=Bar; Button.SetBounds(D(X),D(10),D(W),D(34)); Button.Caption:=Caption; Button.OnClick:=Handler; Button.Enabled:=Enabled; end;
 begin
-  inherited CreateNew(AOwner); FPresets:=List; FFileName:=FileName; FWritable:=Writable; FHasProject:=HasProject;
+  inherited CreateScaledNew(AOwner,OwnerControlPPI(AOwner)); FPresets:=List; FFileName:=FileName; FWritable:=Writable; FHasProject:=HasProject;
   Caption:='画像生成の共通指示プリセット'; Position:=poOwnerFormCenter; BorderStyle:=bsDialog; Font.Name:='Yu Gothic UI'; Font.Size:=10;
   ClientWidth:=D(880); ClientHeight:=D(580);
   Bar:=TPanel.Create(Self); Bar.Parent:=Self; Bar.Align:=alBottom; Bar.Height:=D(54); Bar.BevelOuter:=bvNone;

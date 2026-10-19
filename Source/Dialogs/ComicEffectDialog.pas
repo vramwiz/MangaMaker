@@ -33,26 +33,26 @@ type
   end;
 
 implementation
-
-uses Vcl.Dialogs, Vcl.Imaging.pngimage, System.IOUtils, System.Math;
+uses ComicDpi, Vcl.Dialogs, Vcl.Imaging.pngimage, System.IOUtils, System.Math, Winapi.Windows;
 
 constructor TComicEffectDialog.CreateManager(AOwner: TComponent; Materials: TObjectList<TComicEffectMaterial>; Writable: Boolean; const LibraryPath: string; Changed: TNotifyEvent);
 var Bar,Right: TPanel; Button: TButton;
+  function D(Value: Integer): Integer; begin Result:=MulDiv(Value,CurrentPPI,96); end;
   function Action(const Caption: string; Width: Integer; Handler: TNotifyEvent): TButton;
   begin
-    Result:=TButton.Create(Self); Result.Parent:=Bar; Result.AlignWithMargins:=True; Result.Margins.SetBounds(0,0,10,0);
-    Result.Width:=Width; Result.Align:=alLeft; Result.Caption:=Caption; Result.OnClick:=Handler;
+    Result:=TButton.Create(Self); Result.Parent:=Bar; Result.AlignWithMargins:=True; Result.Margins.SetBounds(D(0),D(0),D(10),D(0));
+    Result.Width:=D(Width); Result.Align:=alLeft; Result.Caption:=Caption; Result.OnClick:=Handler;
   end;
 begin
-  inherited CreateNew(AOwner); FMaterials:=Materials; FWritable:=Writable; FLibraryPath:=LibraryPath; FOnChanged:=Changed;
-  Caption:='漫画効果素材 — 共通ライブラリ'; Width:=880; Height:=640; Constraints.MinWidth:=750; Constraints.MinHeight:=450;
+  inherited CreateScaledNew(AOwner,OwnerControlPPI(AOwner)); FMaterials:=Materials; FWritable:=Writable; FLibraryPath:=LibraryPath; FOnChanged:=Changed;
+  Caption:='漫画効果素材 — 共通ライブラリ'; Width:=D(880); Height:=D(640); Constraints.MinWidth:=D(750); Constraints.MinHeight:=D(450);
   Position:=poOwnerFormCenter; Font.Name:='Yu Gothic UI'; Font.Size:=10;
-  Bar:=TPanel.Create(Self); Bar.Parent:=Self; Bar.Align:=alBottom; Bar.Height:=54; Bar.Padding.SetBounds(12,10,12,10); Bar.BevelOuter:=bvNone;
+  Bar:=TPanel.Create(Self); Bar.Parent:=Self; Bar.Align:=alBottom; Bar.Height:=D(54); Bar.Padding.SetBounds(D(12),D(10),D(12),D(10)); Bar.BevelOuter:=bvNone;
   FImport:=Action('PNGを登録',140,ImportClick); FRename:=Action('名前変更',120,RenameClick); FDelete:=Action('削除',100,DeleteClick);
-  Button:=TButton.Create(Self); Button.Parent:=Bar; Button.Align:=alRight; Button.Width:=140; Button.Caption:='閉じる'; Button.ModalResult:=mrCancel; Button.Cancel:=True;
-  FList:=TListBox.Create(Self); FList.Parent:=Self; FList.Align:=alLeft; FList.Width:=230; FList.OnClick:=Selection;
-  Right:=TPanel.Create(Self); Right.Parent:=Self; Right.Align:=alClient; Right.Padding.SetBounds(12,12,12,12); Right.BevelOuter:=bvNone;
-  FHint:=TLabel.Create(Self); FHint.Parent:=Right; FHint.AutoSize:=False; FHint.Align:=alBottom; FHint.Height:=64; FHint.WordWrap:=True;
+  Button:=TButton.Create(Self); Button.Parent:=Bar; Button.Align:=alRight; Button.Width:=D(140); Button.Caption:='閉じる'; Button.ModalResult:=mrCancel; Button.Cancel:=True;
+  FList:=TListBox.Create(Self); FList.Parent:=Self; FList.Align:=alLeft; FList.Width:=D(230); FList.OnClick:=Selection;
+  Right:=TPanel.Create(Self); Right.Parent:=Self; Right.Align:=alClient; Right.Padding.SetBounds(D(12),D(12),D(12),D(12)); Right.BevelOuter:=bvNone;
+  FHint:=TLabel.Create(Self); FHint.Parent:=Right; FHint.AutoSize:=False; FHint.Align:=alBottom; FHint.Height:=D(64); FHint.WordWrap:=True;
   FImage:=TImage.Create(Self); FImage.Parent:=Right; FImage.Align:=alClient; FImage.Proportional:=True; FImage.Center:=True;
   RefreshList;
 end;

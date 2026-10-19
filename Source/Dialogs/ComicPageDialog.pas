@@ -4,7 +4,7 @@
 
 interface
 
-uses System.Classes, System.SysUtils, System.Types, System.Generics.Collections,
+uses ComicDpi, System.Classes, System.SysUtils, System.Types, System.Generics.Collections,
   Vcl.Forms, Vcl.Controls, Vcl.StdCtrls, Vcl.ExtCtrls, ComicModel, ComicPagePresets;
 
 type
@@ -54,7 +54,7 @@ var I,Column,Row: Integer; LabelControl: TLabel; Button: TButton; Bar: TPanel;
   end;
 const Captions: array[0..5] of string = ('出力の幅 (px)','出力の高さ (px)','左余白 (px)','上余白 (px)','右余白 (px)','下余白 (px)');
 begin
-  inherited CreateNew(AOwner); FPresets:=Presets; FFileName:=FileName; FWritable:=Writable; FResult:=Basis;
+  inherited CreateScaledNew(AOwner,OwnerControlPPI(AOwner)); FPresets:=Presets; FFileName:=FileName; FWritable:=Writable; FResult:=Basis;
   Caption:='ページ基準 — 全ページ共通'; Position:=poOwnerFormCenter; BorderStyle:=bsDialog; KeyPreview:=True;
   Font.Name:='Yu Gothic UI'; Font.Size:=10; ClientWidth:=D(650); ClientHeight:=D(510);
   LabelControl:=TLabel.Create(Self); LabelControl.Parent:=Self; LabelControl.SetBounds(D(20),D(16),D(600),D(22)); LabelControl.Caption:='共通プリセット';

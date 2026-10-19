@@ -52,6 +52,8 @@ procedure TComicAssetsTestsHelper.SafetyChecks;
       Check((Assets.Count=2) and (Assets[1].Name=FCharacters[0].Name),'repaired character library loads completely on retry');
 
       P:=CreateFixtureProject; P.Initialize('切替元 fixture','1'); Probe.AdoptProject(P,False);
+      Check(Probe.FPages.Parent.Visible and Probe.FWorkspaceHost.Visible and Probe.FStatus.Visible,
+        'successful new project adoption reveals page list workspace and status');
       Probe.FGeometryPoints.Add(TPointF.Create(120,130)); Probe.FTool:=8; Probe.FFirst:=True;
       Probe.FSplitStage:=2; Probe.FSplitPanelID:='previous-panel'; Probe.FPageDropIndex:=3;
       P:=CreateFixtureProject; P.Initialize('切替先 fixture','2'); State:=P.Snapshot;

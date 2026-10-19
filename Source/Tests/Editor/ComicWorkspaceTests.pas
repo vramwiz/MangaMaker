@@ -236,7 +236,7 @@ procedure TComicWorkspaceTestsHelper.IconChecks;
       PNG.Assign(B); PNG.SaveToFile(TPath.Combine(TestFolder,Name+'.png'));
     end;
     procedure CheckLayout(PPI,W,H: Integer; const Name: string);
-    var Mode,PX,PY,Category: Integer; AllFit,NoOverlap: Boolean; First,Second: TComicIconButton; Scroll: TScrollBox;
+    var Mode,PX,PY,Category: Integer; AllFit,NoOverlap: Boolean; First,Second: TComicIconButton; Scroll: TScrollBox; Details: string; Control: TControl;
     begin
       Scaled:=True; ScaleForPPI(PPI);
       // 非表示HWNDの実モニターDPIとは区別し、VCLの拡縮済みPPIでオフスクリーン検証を行う。
@@ -245,15 +245,18 @@ procedure TComicWorkspaceTestsHelper.IconChecks;
       for Mode:=0 to High(FModeButtons) do begin
         FModeButtons[Mode].Click;
         if Mode in [1,3] then TScrollBox(FTabs.ActivePage.Controls[0]).VertScrollBar.Position:=0;
-        SaveUI(Name+'-mode'+IntToStr(Mode)); AllFit:=True; NoOverlap:=True;
+        SaveUI(Name+'-mode'+IntToStr(Mode)); AllFit:=True; NoOverlap:=True; Details:='';
         for First in FIconButtons do begin
-          if (First.Left<0) or (First.Left+First.Width>First.Parent.ClientWidth) then AllFit:=False;
-          for Second in FIconButtons do if (First<>Second) and (First.Parent=Second.Parent) then begin
+          if not First.Visible then Continue;
+          if (First.Left<0) or (First.Left+First.Width>First.Parent.ClientWidth) then begin
+            AllFit:=False; Details:=Details+Format(' [%s %d+%d/%d]',[First.Caption,First.Left,First.Width,First.Parent.ClientWidth]);
+          end;
+          for Second in FIconButtons do if Second.Visible and (First<>Second) and (First.Parent=Second.Parent) then begin
             RectA:=First.BoundsRect; RectB:=Second.BoundsRect;
-            if IntersectRect(RectA,RectA,RectB) then NoOverlap:=False;
+            if IntersectRect(RectA,RectA,RectB) then begin NoOverlap:=False; Details:=Details+' [overlap '+First.Caption+' / '+Second.Caption+']'; end;
           end;
         end;
-        Check(AllFit and NoOverlap,Name+' mode '+IntToStr(Mode)+' icon bounds fit without overlap');
+        Check(AllFit and NoOverlap,Name+' mode '+IntToStr(Mode)+' icon bounds fit without overlap'+Details);
         Check((FModeTitle.Caption=FTabs.ActivePage.Caption) and FModeButtons[Mode].Selected,
           Name+' mode '+IntToStr(Mode)+' keeps selected icon and readable mode title');
         if Mode=1 then begin
@@ -271,10 +274,18 @@ procedure TComicWorkspaceTestsHelper.IconChecks;
           FCanvas.Perform(WM_LBUTTONDOWN,MK_LBUTTON,MakeLParam(PX,PY));
           FCanvas.Perform(WM_LBUTTONUP,0,MakeLParam(PX,PY));
           Scroll:=TScrollBox(FText.Parent); Second:=Find(brDeleteBalloon,1);
-          Scroll.ScrollInView(Second); ActiveControl:=Second;
-          Check((Second.Top>=0) and (Second.Top+Second.Height<=Scroll.ClientHeight),
-            Name+' bottom actions remain reachable by scrolling and keyboard focus');
-          SaveUI(Name+'-mode3-scrolled');
+          ActiveControl:=Second;
+          Check((Second.Top>=0) and (Second.Top+Second.Height<=Scroll.ClientHeight) and
+            (Scroll.VertScrollBar.Position=0) and (Scroll.VertScrollBar.Range<=Scroll.ClientHeight),
+            Name+' dialogue actions fit without scrolling');
+          Check(not FText.Visible and not FText.TabStop and not Find(brApplyText,0).Visible and
+            not Find(brApplyText,0).TabStop,Name+' legacy text inputs remain hidden and outside tab navigation');
+          for PX:=0 to Scroll.ControlCount-1 do begin
+            Control:=Scroll.Controls[PX]; if not Control.Visible then Continue;
+            Check((Control.Top>=0) and (Control.Left>=0) and (Control.Left+Control.Width<=Scroll.ClientWidth) and
+              (Control.Top+Control.Height<=Scroll.ClientHeight),Name+' visible dialogue setting fits: '+Control.ClassName);
+          end;
+          SaveUI(Name+'-mode3-compact');
         end;
         if Mode=4 then begin
           for Category:=0 to 2 do begin
@@ -339,8 +350,8 @@ procedure TComicWorkspaceTestsHelper.IconChecks;
     PNG:=TPngImage.Create;
     try
       Check(FIconButtons.Count>=30,'switching and editing commands use consistent icon controls');
-      for Button in FIconButtons do Check((Button.Caption<>'') and (Button.Hint<>'') and Button.ShowHint and Button.TabStop,
-        'icon keeps operation name, hint and tab stop: '+Button.Caption);
+      for Button in FIconButtons do Check((Button.Caption<>'') and (Button.Hint<>'') and Button.ShowHint and (Button.TabStop=Button.Visible),
+        'icon keeps operation name, hint and tab navigation for visible commands: '+Button.Caption);
       FModeButtons[1].Click;
       Button:=Find(brTool,1,1); ActiveControl:=Button;
       Button.Perform(CM_DIALOGKEY,VK_SPACE,0);
@@ -436,7 +447,8 @@ procedure TComicWorkspaceTestsHelper.MenuChecks;
     finally FProject:=Project; UpdateIconState; end;
     Check(FSaveMenu.Enabled and FExportMenu.Enabled and FImagesMenu.Enabled,'project commands re-enable after restoring the loaded project');
     Check((FUndoMenu.Enabled=(FUndo.Count>0)) and (FRedoMenu.Enabled=(FRedo.Count>0)),'menu undo and redo reflect actual history availability');
-    FModeMenu[3].Click; ActiveControl:=FText;
+    // 保持した旧本文欄のショートカット保護も、検証中だけ表示して引き続き確認する。
+    FModeMenu[3].Click; FText.Visible:=True; ActiveControl:=FText;
     try
       Check(not GlobalShortcutsAllowed,'text editor keeps application shortcuts out of its input scope');
       KeyValue:=Ord('1'); Key(Self,KeyValue,[ssCtrl]);
@@ -445,7 +457,7 @@ procedure TComicWorkspaceTestsHelper.MenuChecks;
       Check(KeyValue=Ord('0'),'Ctrl+0 is left to text input without resetting view');
       KeyValue:=VK_TAB; Key(Self,KeyValue,[ssCtrl]);
       Check((KeyValue=VK_TAB) and (FTabs.ActivePageIndex=3),'Ctrl+Tab is left to text input');
-    finally FModeMenu[Mode].Click; ActiveControl:=Control; end;
+    finally ActiveControl:=nil; FText.Visible:=False; FModeMenu[Mode].Click; ActiveControl:=Control; end;
     Check(FProject.Snapshot=Model,'menu mode switching and shortcut guards preserve the entire project');
   end;
 

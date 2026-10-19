@@ -1,4 +1,45 @@
-﻿# MangaMaker 作業記録
+﻿## UI境界の細い縁と検証方針（2026-10-19）
+
+- 最新ユーザー指示：以降、追加指示があるまではDPIなどの検証を最小限とする。軽微なUI変更で多段階DPI往復や全自己検証を毎回繰り返さず、変更に必要なビルド・差分確認を優先する。
+- ページ一覧・操作見出し・右側設定・モード切替・画像管理の一覧／プレビュー／操作バー・素材パネルへ、BevelWidth=1の細い縁を追加した。既存のアイコンボタンの1px枠は保持。外側の寸法と操作配置を維持し、枠の内側だけ1px分を使う。
+- 今回は通常Win64 Releaseビルド、89ユニットの構成確認、差分・BOM確認に限定。DPI往復・全自己検証・実UI操作は未実施。既存の画像管理の寸法検証は、外幅250DIPと枠を差し引いた一覧幅を分けるよう更新したが、今回は実行していない。既存ComicPlacementPreviewのH2077以外にビルドエラー・警告なし。
+- TestOutput/UIBorders/Beforeへ変更前の対象ソース・文書・EXE・res・既存Git差分を保持。build.logは同セッション内。通常アプリが起動しておらず、開始前EXEの一致を確認して直下EXEを更新した。SHA-256：18E01AC0CE6088280AF415F1ECCB2CB21ED6C79AB4D89706AA1512F90CD6B0A9。resは開始前へ復元。自動起動・実作品変更・commit/pushなし。
+
+## 作品を開くまで編集UIを非表示（2026-10-19）
+
+- 初期起動ではメニューだけを残し、ページ一覧の親パネル・編集領域全体・ステータス欄を非表示にした。構築時も非表示にして起動中の露出を防ぐ。共通管理と新規作成・開く・最近使った作品のメニューは維持する。
+- RefreshUIで作品の有無へ表示を同期する。新規作品や読込をAdoptProjectで確定した後に表示するため、取消・読込失敗で未作成の編集画面は開かない。既存の画像管理モード内の表示切替は保持する。
+- 自己検証へ起動時非表示・メニュー維持・新規採用後表示・初回読込失敗時非表示・読込成功後表示の5項目を追加。Win64 Debug/Releaseとも4888項目PASS（末尾の完了報告行を除く）。両build.ps1の180秒待機は超過したが、検証プロセスは完走し、停止後のresult.txtで失敗なしと完了報告を確認した。fixtureはDebugがTestOutput/9f67c136c42847d090476f33d2a39d1e、ReleaseがTestOutput/e1e5afda21694554815f90db88a7ce99。非表示フォームの状態確認であり、通常起動の手操作確認とは区別する。
+- 通常Releaseもビルド成功。89ユニットの構成制約、PascalのUTF-8 BOM、git diff --checkを確認。既存ComicPlacementPreviewのH2077以外にエラー・警告なし。通常版の検証・計測DCUは0件。ログ・ソースハッシュ・結果はTestOutput/StartupUIへ記録し、開始前Source・EXE・res・文書・既存差分をBeforeへ保持した。
+- 通常アプリが起動しておらず開始前EXEの一致を確認して直下MangaMaker.exeを更新。SHA-256：38CD58B193CBF91FA1DE0643D7BF8E886E892CF63A3A904C407837ECDD399244。resは開始前とバイト一致へ復元。実作品・他プロジェクトの変更、自動起動、実画像生成、外部送信、commit/pushなし。
+
+# MangaMaker 作業記録
+## セリフ本文欄の非表示と右側設定の簡素化（2026-10-19）
+
+- ユーザー指示：セリフ本文はページ上の入力操作で十分なため、右側の本文表示・編集は不要。ただし将来に備えて処理を残し、非表示にする。右側はスクロールしなくても使える簡素さを優先する。
+- ComicWorkspaceUIの本文TMemoと「専用文字入力」ボタンをVisible=False・TabStop=Falseへ変更した。本文の同期、即時反映、同一フォーカス中のUndo集約、専用入力画面とその確定・取消の処理は保持する。ページ上の直接入力・再編集・文字選択、台本セリフ取込も維持する。
+- 設定を台本取込／フォント／文字サイズと縦横・文字のみ／装飾4種／文字色と輪郭／線幅と塗り・線色／枠外表示／削除へ短い行で整理した。本文欄を隠した後の空白も除去し、必要な縦寸法を748DIPから422DIPへ短縮した。通常の画面では下端の削除まで収まり、極端に小さい画面用のスクロール機構は保持する。製品ソースの今回変更はWorkspace/ComicWorkspaceUIのみ。
+- 既存のUI回帰へ、通常・狭いウィンドウ×96/144 PPIでスクロール位置0のまま全表示設定・削除が収まること、旧入力欄が非表示でTab対象外なことを追加した。非表示のコントロールは配置重複の判定から外し、保持機能のEsc・ショートカット保護・メモ即時反映・Undoは検証中だけ旧欄を表示して従来の確認を継続する。ページ上の文字入力の回帰も維持した。
+- Win64 Debug/Releaseは各4883項目PASS（従来4763から120項目追加、末尾の完了報告行を除く）。両build.ps1は180秒以内に完了。Debug fixtureはTestOutput/f58f4388400b495c9ab3af04add1e0f8、ReleaseはTestOutput/2a744a63fd9c4292887aa7a32c24ddd6。通常Releaseも成功し、検証・計測DCUは0件。既存ComicPlacementPreviewのH2077ヒント以外にエラー・警告なし。構成89ユニット、対象PascalのUTF-8 BOM、git diff --checkを確認した。
+- ui-96/144-mode3-compact.pngとui-96/144-narrow-mode3-compact.pngを出力し、狭い96/144 PPIの実VCL描画画像で本文欄がなく、設定・削除が下端まで収まることを目視確認した。これは隔離VCLによる確認で、実モニターDPI切替や物理IME操作の再試験はしていない。ログ・ソースハッシュ・検証結果はTestOutput/CompactDialogue/のdebug.log、release.log、production.log、source-hashes.csv、verification.jsonへ保存した。
+- 開始前のSource・dproj/res・通常EXE・README/noteと既存Git差分はTestOutput/CompactDialogue/Beforeへ保持し、以前の未コミット変更を維持した。実作品・共有設定・同階層プロジェクトを検証用に変更せず、今回の読み取り参照はリポジトリ内のみ。
+- 通常アプリが起動しておらず、直下EXEが開始前と一致することを確認して通常Releaseへ更新した。SHA-256：3CD8E0BC355E4EFE63FE24954958E99DCE5406037C8CBBFF1662D73F3CE2076F。旧EXEはBeforeへ保持し、resは開始前とバイト一致へ復元した。アプリの自動起動・強制終了、実画像生成・外部送信、commit/pushなし。
+
+## 画像管理の常設化・IME終了経路・DPI V2（2026-10-19）
+
+- ユーザーから実IME操作の動作確認を受領。ただし経路によってIMEがオフにならないとの指摘があり、文字入力から非入力操作へ移る境界を修正した。Text/ComicImeFocusで文字欄・編集可能コンボを除外し、メインフォーム、画像管理、専用文字入力のCM_FOCUSCHANGEDでIMEを閉じる。既存の変換結果受取や入力バッファ、WindowsImeControllerの退避・復元は維持する。実IME入力そのものの未検証扱いは取り下げるが、今回修正した各終了経路の物理操作は未確認。
+- 画像管理を第6の編集画面へ移動。切替アイコンは一番左に重ね画像の図柄で表示し、Ctrl+6と既存Ctrl+Shift+Iからも開く。既存Ctrl+1～5の割当は保持する。画像管理では通常の編集領域へ一覧・プレビュー・説明・参照人物・生成・台本取込を埋め込み、その他の編集時は従来の右側ツール欄へ戻す。キャラクター管理や画像のファイル選択等の個別操作は従来どおり。
+- Workspace/Management/ComicWorkspaceAssetsへ画面の生成・確定・破棄を分離。画像管理を離れるとDraftへ保存し、操作を1回のUndoへまとめる。Ctrl+Sは画面を表示したまま未確定の説明も正式保存する。保存失敗では画面と入力を保持する。Undo/Redo、作品やページ切替、解像度変更では管理画面の古いモデル参照を破棄してから進む。ページクリックでは保存に伴う一覧更新前の選択先を保持する。画面を離れると所有する生成要求を中止し、遅延結果の採用を防ぐ。埋込み管理画面でも主フォームが標準ダイアログで無効な間は外部書込・生成結果採用を待たせる。
+- 埋込み後のHWND再作成でツリー項目が失われる問題を検証で発見し、子コントロールを構築する前に親・BorderStyle・HWNDを確定した。SelectAssetも同一ノードや通知省略時の入力欄を同期する。
+- 開始時のユーザー変更はMangaMaker.dprojとMangaMaker.res。DPI V2・除外パッケージなどの設定を保持し、AppDPIAwarenessModeを共通側にも指定してReleaseへ反映した。IDEの保存で欠落していたMangaMakerSelfTestの条件定義・検索パスだけを復旧した。最初のビルドは通常版として生成され、自己検証要求をexit2で拒否したため、検証成功とは扱っていない。
+- Controls/ComicDpi.OwnerControlPPIとCreateScaledNewを使い、所有画面のDPIをフォーム構築前に確定する。ページ基準・生成指示・人物参照・文字入力・素材管理・出力の実行時画面を揃えた。この環境の実DPIは120で、途中のHWND生成によって96基準と120基準が混在する不具合を修正した。埋込み素材パネルもScreen.PixelsPerInchではなくCurrentPPIを使う。編集点の大きさ・当たり判定・文字選択の許容幅を同じDPIで換算し、モニター変更前にドラッグを取り消し、変更後に表示座標を再計算する。行高の拡縮はVCLへ任せ、二重設定によるHWND再作成を避ける。右欄は端数DPIとスクロールバーの余白を考慮して320DIPへ調整した。
+- 回帰はTests/Interaction/ComicAssetWorkspaceTestsへ分離。96/144/192/96 PPIの往復、埋込みと非モーダル、一覧項目と選択、文字入力の保存・1回Undo/Redo・再読込、ページ切替、Draftロック失敗・再試行、標準ダイアログ中の外部書込拒否、フォーム3種の非入力IME終了を確認する。既存の画像パン試験は吸着の境界に入っていたためAlt解除を明示し、パン自体と専用スナップ試験を区別した。UIとページ基準の既存試験には失敗時の寸法を診断表示へ追加した。
+- 読み取り参照元：Delphi 37.0標準のVcl.Forms.pas（CreateScaledNew、ScaleForPPIRect、SetParent、SetFocusedControl、モニターDPI変更通知）、Vcl.Controls.pas（ScaleForPPI・CMFocusChanged）、Vcl.StdCtrls.pas（リスト行高・ChangeScale）、Vcl.ComCtrls.pas（ツリー選択・HWND作成）。同階層プロジェクトは今回参照・変更していない。
+- 開始前の全Source・dproj/res・通常EXE・README/note・既存Git差分はTestOutput/WorkspaceManagement/Beforeへ保持。検証データとログはTestOutput内だけを使用し、実作品・共有設定・サンプル・他プロジェクトには検証用変更を加えていない。ユーザーアプリの強制終了・自動起動、実画像生成、外部送信、commit/pushなし。既知の失敗を修正して再検証する際は、パスと--self-test引数を照合した今回所有の検証プロセスだけを停止した。
+- 最終Debugは4763項目PASS（末尾の完了報告行を除く）。fixtureはTestOutput/35e84675836b4287995f49a11c6465fa。build.ps1の180秒待機は超過したが、検証プロセスは完走し、終了後のresult.txtで失敗なしと完了報告を確認した。Releaseも同じソースで4763項目PASS、180秒以内にbuild.ps1が完了した。fixtureはTestOutput/ac653abf28114776932e2b64e6cec655。今回の追加は従来4709項目から54項目。CLIガード3件はexit2、通常Releaseの検証/計測DCUは0件。89ユニットの構成制約、対象PascalのUTF-8 BOM、git diff --checkを確認した。既存ComicPlacementPreviewのH2077以外にエラー・警告なし。
+- 検証ログ・CLI結果・ソースハッシュ・更新証跡はTestOutput/WorkspaceManagement/へ集約し、verification.jsonへ記録。asset-workspace-144.pngで左端アイコン・一覧・プレビュー・生成操作の配置を確認した。96/144/192 PPIは隔離VCLによる確認であり、実モニター間の切替や今回の物理IME終了操作とは区別する。
+- 実行中の通常アプリがなく、開始前EXEのハッシュと一致することを確認して直下MangaMaker.exeを通常Releaseへ更新した。SHA-256：CDDB51ECB02F36FA2B0528453AD01D94FCEB5C7C98C34B74C15EA5003B65C7C6。旧EXEはBeforeへ保持。MangaMaker.resは開始前のユーザー変更済みファイルとバイト一致へ復元し、dprojのユーザー設定も保持。自動起動・commit/pushなし。
+
 ## 新規ページの初期寸法650×975とサイズプリセット（2026-10-18）
 
 - ユーザー指定のニコニコ漫画投稿サイズ650×975pxを新規作品の初期値へ変更。ComicModelのDefaultPageWidth/DefaultPageHeightをモデルと共通ページ基準プリセットで共有する。余白は従来の各60pxを維持し、保存済み作品の寸法と、旧JSONで寸法省略時の1200×1700フォールバックは変更しない。

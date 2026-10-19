@@ -4,7 +4,7 @@
 // IME受取/バッファはComicTextEditing、IME状態は参照元WindowsImeControllerを再利用。
 // 入力と完成ページはComicTextLayoutを共有する。表示領域/文字サイズは各画面の設定に従う。
 interface
-uses Winapi.Windows, Winapi.Messages, Winapi.Imm, System.SysUtils, System.Types,
+uses ComicDpi, Winapi.Windows, Winapi.Messages, Winapi.Imm, System.SysUtils, System.Types,
   System.Classes, System.Math, System.UITypes, System.Generics.Collections, Vcl.Controls, Vcl.Forms,
   Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.Graphics, Vcl.Clipbrd, ComicTextEditing, WindowsImeController,
   ComicTextLayout, ComicTextUnits, ComicModel;
@@ -86,6 +86,7 @@ type
     procedure Accept(Sender: TObject);
     procedure Cancel(Sender: TObject);
     procedure Shown(Sender: TObject);
+    procedure CMFocusChanged(var Message: TCMFocusChanged); message CM_FOCUSCHANGED;
   public
     constructor CreateEditor(AOwner: TComponent; const Text: string; Vertical,Testing: Boolean);
     destructor Destroy; override;
@@ -94,7 +95,9 @@ type
     property Editor: TComicTextInput read FEditor;
   end;
 implementation
-uses ComicScriptAssist;
+uses ComicScriptAssist, ComicImeFocus;
+procedure TComicTextDialog.CMFocusChanged(var Message: TCMFocusChanged);
+begin inherited; if not (csDestroying in ComponentState) then CloseControlIme(Message.Sender); end;
 procedure TComicTextDialog.UseScript(Project: TComicProject; const ImageID: string);
 begin
   if (Project=nil) or (Project.ScriptSource='') then Exit; FScriptProject:=Project;
@@ -393,7 +396,7 @@ end;
 constructor TComicTextDialog.CreateEditor(AOwner: TComponent; const Text: string; Vertical,Testing: Boolean);
 var Bar: TPanel; Button: TButton; PPI: Integer;
 begin
-  inherited CreateNew(AOwner); Caption:='吹き出しの文字入力（初期プレビュー）'; Position:=poOwnerFormCenter; KeyPreview:=True;
+  inherited CreateScaledNew(AOwner,OwnerControlPPI(AOwner)); Caption:='吹き出しの文字入力（初期プレビュー）'; Position:=poOwnerFormCenter; KeyPreview:=True;
   Font.Name:='Yu Gothic UI'; Font.Size:=10; PPI:=CurrentPPI; ClientWidth:=MulDiv(680,PPI,96); ClientHeight:=MulDiv(440,PPI,96);
   Bar:=TPanel.Create(Self); Bar.Parent:=Self; Bar.Align:=alBottom; Bar.Height:=MulDiv(64,PPI,96); Bar.BevelOuter:=bvNone;
   Button:=TButton.Create(Self); Button.Parent:=Bar; Button.Caption:='確定 (Ctrl+Enter)'; Button.SetBounds(MulDiv(340,PPI,96),MulDiv(16,PPI,96),MulDiv(152,PPI,96),MulDiv(34,PPI,96)); Button.OnClick:=Accept;

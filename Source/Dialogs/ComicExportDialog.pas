@@ -26,17 +26,19 @@ type
   end;
 
 implementation
+uses ComicDpi;
 
 constructor TComicExportDialog.CreateOptions(AOwner: TComponent; const Output: string; OpenFolder: TNotifyEvent; const Warnings: string);
 begin
-  inherited CreateNew(AOwner); Caption:='連番PNG出力'; Position:=poOwnerFormCenter; ClientWidth:=600; ClientHeight:=246;
+  inherited CreateScaledNew(AOwner,OwnerControlPPI(AOwner)); Caption:='連番PNG出力'; Position:=poOwnerFormCenter;
+  ClientWidth:=MulDiv(600,CurrentPPI,96); ClientHeight:=MulDiv(246,CurrentPPI,96);
   BorderStyle:=bsDialog; Font.Name:='Yu Gothic UI'; Font.Size:=10;
   FLabel:=TLabel.Create(Self); FLabel.Parent:=Self; FLabel.AutoSize:=False; FLabel.Caption:='出力先：';
   FOutput:=TEdit.Create(Self); FOutput.Parent:=Self; FOutput.ReadOnly:=True; FOutput.Text:=Output;
   FOutput.Hint:=Output; FOutput.ShowHint:=True;
   FWarning:=TLabel.Create(Self); FWarning.Parent:=Self; FWarning.AutoSize:=False; FWarning.WordWrap:=True;
   FWarning.Caption:=Warnings; FWarning.Visible:=Warnings<>'';
-  if FWarning.Visible then ClientHeight:=340;
+  if FWarning.Visible then ClientHeight:=MulDiv(340,CurrentPPI,96);
   FRadio:=TRadioGroup.Create(Self); FRadio.Parent:=Self; FRadio.SetBounds(16,82,568,92); FRadio.Caption:='出力対象';
   FRadio.Items.Add('変更されたページのみ'); FRadio.Items.Add('すべてのページ'); FRadio.ItemIndex:=0;
   FApply:=TButton.Create(Self); FApply.Parent:=Self; FApply.Caption:='出力'; FApply.Default:=True; FApply.ModalResult:=mrOK;
