@@ -11,7 +11,7 @@ procedure RunWorkspaceCancelGeneration(Form: TMainForm; Sender: TObject);
 procedure RunWorkspaceGenerationTick(Form: TMainForm; Sender: TObject);
 implementation
 uses Winapi.Windows, Winapi.Messages, Winapi.ShellAPI, Winapi.Imm, System.SysUtils, System.Classes, System.Types, System.UITypes, System.Math, System.IOUtils, System.Generics.Collections, System.JSON, System.Hash, System.DateUtils, Vcl.Controls, Vcl.Forms, Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.ComCtrls, Vcl.Menus, Vcl.Dialogs, Vcl.Graphics, Vcl.Imaging.pngimage, ComicModel, ComicImageAdoption
-  , ComicScriptAssist, ComicScriptGeneration {$IFDEF DEBUG}, ComicPerformance{$ENDIF};
+  , ComicScriptAssist, ComicScriptGeneration, ComicProjectReferences {$IFDEF DEBUG}, ComicPerformance{$ENDIF};
 type
   TComicWorkspaceGenerationHelper = class helper for TMainForm
     function ExecuteGenerationSnapshot(const LibraryName,ProjectID,AssetID: string; out References: TArray<string>): string;
@@ -120,15 +120,16 @@ begin
   Job:=TComicGenerationJob.Create;
   try
     FAssetManager.FlushDraft;
+    if not FAssetManager.IsCharacters then CaptureProjectReferences(FProject,FCharacters);
     Job.RequestID:=NewUID; Job.DialogID:=FAssetManager.GenerationSessionID; Job.AssetID:=FAssetManager.CurrentAsset.ID;
-    Job.AssetName:=FAssetManager.CurrentAsset.Name; Job.ExpectedFileName:=FAssetManager.CurrentAsset.FileName;
+    Job.AssetName:=FAssetManager.CurrentAsset.Name; Job.ExpectedFileName:=FAssetManager.CurrentAsset.ImageFile;
     if Trim(Job.AssetName)='' then raise Exception.Create('先に人物名または場面名を入力してください。');
     Job.LibraryName:='images'; if FAssetManager.IsCharacters then Job.LibraryName:='characters';
     if FProject<>nil then Job.ProjectID:=FProject.ID;
     if Page<>nil then Job.PageID:=Page.ID;
     if (Page<>nil) and (FPanelIndex>=0) and (FPanelIndex<Page.Panels.Count) then Job.PanelID:=Page.Panels[FPanelIndex].ID;
     Job.Root:=TPath.Combine(DataRoot,'Characters'); Job.Prefix:='';
-    if Job.LibraryName='images' then begin Job.Root:=FProject.Folder; Job.Prefix:='Images\'; end;
+    if Job.LibraryName='images' then begin Job.Root:=FProject.Folder; Job.Prefix:=''; end;
     Job.Fingerprint:=GenerationSnapshot(Job.LibraryName,Job.ProjectID,Job.AssetID,References);
     Job.Folder:=TPath.Combine(DataRoot,'Runtime\Generation\'+Job.RequestID);
     Context:=TJSONObject.Create;

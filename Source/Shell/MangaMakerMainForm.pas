@@ -84,6 +84,11 @@ type
     FView: TComicView;
     FTabs: TPageControl;
     FWorkspaceHost,FToolsPanel: TPanel;
+    FPrimaryBar: TPanel;
+    FPrimaryButtons: array[0..2] of TComicIconButton;
+    FPrimaryIndex: Integer;
+    FCharacterWorkspace: TAssetDialog;
+    FLastAssetID,FLastCharacterID: string;
     FImageWorkspace: TAssetDialog;
     FImageWorkspaceBefore: string;
     FStatus: TStatusBar;
@@ -149,6 +154,7 @@ type
     procedure CommitImageWorkspace;
     procedure CloseImageWorkspace;
     procedure OpenImageWorkspace;
+    procedure PrimaryClick(Sender: TObject);
     procedure DoBeforeMonitorDpiChanged(OldDPI,NewDPI: Integer); override;
     procedure DoAfterMonitorDpiChanged(OldDPI,NewDPI: Integer); override;
     procedure CMFocusChanged(var Message: TCMFocusChanged); message CM_FOCUSCHANGED;
@@ -315,7 +321,7 @@ var
   MainForm: TMainForm;
 
 implementation
-uses ComicPageResize, ComicEffectSelection, ComicScriptAssist, ComicScript, ComicWorkspaceUI, ComicWorkspaceBridge, ComicWorkspaceGeneration, ComicWorkspaceViewport, ComicWorkspaceGeometry, ComicWorkspaceInteraction, ComicWorkspaceBalloons, ComicWorkspaceEffects, ComicWorkspaceAssets, ComicImeFocus
+uses ComicPageResize, ComicEffectSelection, ComicScriptAssist, ComicScript, ComicWorkspaceUI, ComicWorkspaceBridge, ComicWorkspaceGeneration, ComicWorkspaceViewport, ComicWorkspaceGeometry, ComicWorkspaceInteraction, ComicWorkspaceBalloons, ComicWorkspaceEffects, ComicWorkspaceAssets, ComicWorkspaceProject, ComicImeFocus
   {$IFDEF DEBUG}, ComicPerformance{$ENDIF};
 
 {$R *.dfm}
@@ -408,7 +414,7 @@ begin
 end;
 destructor TMainForm.Destroy;
 // タイマーと所有する生成要求を先に止め、遅延コールバックが解放済みのUI・作品へ触れないようにする。
-begin FreeAndNil(FImageWorkspace); FAssetManager:=nil; FreeAndNil(FInlineText); FreeAndNil(FEffectPane); FEffectList:=nil; if FGenerationTimer<>nil then FGenerationTimer.Enabled:=False; CancelGeneration(nil); FGenerationJobs.Free; FGenerationJobs:=nil; if FView<>nil then FView.OnCaptureLost:=nil; EndViewPan(False); FBridge.Free; FProject.Free; FCharacters.Free; FRenderer.Free; FUndo.Free; FRedo.Free; FLayouts.Free; FPagePresets.Free; FFontHistory.Free; FGenerationPresets.Free; FEffectMaterials.Free; FRecent.Free; FIconButtons.Free; FGeometryPoints.Free; FSelectedPanels.Free; inherited; end;
+begin FreeAndNil(FCharacterWorkspace); FreeAndNil(FImageWorkspace); FAssetManager:=nil; FreeAndNil(FInlineText); FreeAndNil(FEffectPane); FEffectList:=nil; if FGenerationTimer<>nil then FGenerationTimer.Enabled:=False; CancelGeneration(nil); FGenerationJobs.Free; FGenerationJobs:=nil; if FView<>nil then FView.OnCaptureLost:=nil; EndViewPan(False); FBridge.Free; FProject.Free; FCharacters.Free; FRenderer.Free; FUndo.Free; FRedo.Free; FLayouts.Free; FPagePresets.Free; FFontHistory.Free; FGenerationPresets.Free; FEffectMaterials.Free; FRecent.Free; FIconButtons.Free; FGeometryPoints.Free; FSelectedPanels.Free; inherited; end;
 procedure TMainForm.BridgeRequest(const Request: string; out Reply: string);
 begin HandleWorkspaceBridge(Self,Request,Reply); end;
 procedure TMainForm.RefreshEffectMaterials;
@@ -445,10 +451,11 @@ begin
   if not Enabled or (HandleAllocated and not IsWindowEnabled(Handle)) or
     (Application.ModalLevel>0) then Exit;
   if (Screen.ActiveCustomForm<>nil) and (Screen.ActiveCustomForm<>Self) and
-    (Screen.ActiveCustomForm<>FImageWorkspace) then Exit;
+    (Screen.ActiveCustomForm<>FImageWorkspace) and (Screen.ActiveCustomForm<>FCharacterWorkspace) then Exit;
   Control:=ActiveControl;
   if (FImageWorkspace<>nil) and (Screen.ActiveCustomForm=FImageWorkspace) and
     (FImageWorkspace.ActiveControl<>nil) then Control:=FImageWorkspace.ActiveControl;
+  if (FCharacterWorkspace<>nil) and (Screen.ActiveCustomForm=FCharacterWorkspace) then Control:=FCharacterWorkspace.ActiveControl;
   if Control is TCustomEdit then Exit;
   if (Control is TCustomComboBox) and (TComboBox(Control).Style<>csDropDownList) then Exit;
   Window:=Winapi.Windows.GetFocus;
@@ -476,20 +483,22 @@ procedure TMainForm.CycleMode(Sender: TObject);
 var Index: Integer;
 begin
   if not FTabs.Enabled then Exit;
-  Index:=(FTabs.ActivePageIndex+TComponent(Sender).Tag+Length(FModeButtons)) mod Length(FModeButtons);
+  Index:=(FTabs.ActivePageIndex+TComponent(Sender).Tag+5) mod 5;
   FModeMenu[Index].Click;
 end;
 
 
 procedure TMainForm.BuildUI;
 begin BuildWorkspaceUI(Self); end;
+procedure TMainForm.PrimaryClick(Sender: TObject);
+begin SwitchPrimaryWorkspace(Self,TComponent(Sender).Tag); end;
 function TMainForm.Page: TComicPage;
 begin Result:=nil; if (FProject<>nil) and (FPageIndex>=0) and (FPageIndex<FProject.Pages.Count) then Result:=FProject.Pages[FPageIndex]; end;
 function TMainForm.HasCharacter: Boolean;
 var A: TComicAsset;
 begin
-  Result:=False; for A in FCharacters do if (A.ParentID='') and (Trim(A.Name)<>'') and (A.FileName<>'') and
-    FileExists(SafeChild(TPath.Combine(DataRoot,'Characters'),A.FileName)) then Exit(True);
+  Result:=False; for A in FCharacters do if (A.ParentID='') and (Trim(A.Name)<>'') and (A.ImageFile<>'') and
+    FileExists(SafeChild(TPath.Combine(DataRoot,'Characters'),A.ImageFile)) then Exit(True);
 end;
 function TMainForm.NeedProject: Boolean;
 begin Result:=FProject<>nil; if not Result then Notify('作品を作成または開いてください。'); end;
@@ -524,14 +533,13 @@ begin
     if FProject<>nil then FPageIndex:=Min(FPageIndex,FProject.Pages.Count-1);
     FPages.Synchronize(FProject,FRenderer,FPageIndex); FImages.Synchronize(FProject);
     if FProject<>nil then begin
-      Caption:=FProject.Title+'  /  '+FProject.Episode+' — MangaMaker'; if FDirty then Caption:='* '+Caption;
+      Caption:=FProject.Title; if FProject.Episode<>'' then Caption:=Caption+'  /  '+FProject.Episode;
+      Caption:=Caption+' — MangaMaker'; if FDirty then Caption:='* '+Caption;
     end else Caption:='MangaMaker — AI漫画スタジオ';
     FTabs.Enabled:=FProject<>nil;
     // 作品確定後に編集領域をまとめて表示し、未作成時はメニューだけを残す。
-    FPages.Parent.Visible:=FProject<>nil;
-    FWorkspaceHost.Visible:=FProject<>nil; FStatus.Visible:=FProject<>nil;
-    if (FProject=nil) and not HasCharacter then FStatus.SimpleText:='はじめに［キャラ管理］で人物名と参照画像を登録してください。'
-    else if FProject=nil then FStatus.SimpleText:='［新規作品］で作品タイトルと話数を入力してください。'
+    RefreshPrimaryWorkspace(Self);
+    if FProject=nil then FStatus.SimpleText:='［新規作品］で保存先と作品名を指定してください。'
     else if FImages.Count=0 then FStatus.SimpleText:='［画像管理］で場面を追加し、画像を登録してください。'
     else ShowPageStatus;
     UpdateIconState;
@@ -541,7 +549,8 @@ end;
 procedure TMainForm.ModeClick(Sender: TObject);
 begin
   if not FTabs.Enabled then Exit;
-  if (TComponent(Sender).Tag=5) and not HasCharacter then begin Notify('参照画像付きのキャラを先に登録してください。'); Exit; end;
+  if TComponent(Sender).Tag=5 then begin PrimaryClick(FPrimaryButtons[1]); Exit; end;
+  if FPrimaryIndex<>0 then PrimaryClick(FPrimaryButtons[0]);
   CancelDrag;
   if TComponent(Sender).Tag<>5 then CloseImageWorkspace;
   FTabs.ActivePageIndex:=TComponent(Sender).Tag; TabChanged(nil);
@@ -590,11 +599,11 @@ begin
       brPageUp: Button.Enabled:=HasPage and (FPageIndex>0);
       brPageDown: Button.Enabled:=HasPage and (FPageIndex<FProject.Pages.Count-1);
       brRegister: Button.Enabled:=HasPage and (Page.Panels.Count>0) and FLayoutLibraryWritable;
-      brApplyLayout: Button.Enabled:=HasPage and (FImages.Count>0) and (FLayoutList.ItemIndex>=0);
-      brInsertLayout: Button.Enabled:=CanEdit and (FImages.Count>0) and (FLayoutList.ItemIndex>=0);
+      brApplyLayout: Button.Enabled:=HasPage and (FLayoutList.ItemIndex>=0);
+      brInsertLayout: Button.Enabled:=CanEdit and (FLayoutList.ItemIndex>=0);
       brManageLayout: Button.Enabled:=FLayoutLibraryWritable and (FLayoutList.ItemIndex>=0) and
         not TComicLayout(FLayoutList.Items.Objects[FLayoutList.ItemIndex]).BuiltIn;
-      brTool: Button.Enabled:=HasPage and ((Button.Tag in [0,14]) or (FImages.Count>0));
+      brTool: Button.Enabled:=HasPage;
       brDeletePanel: Button.Enabled:=HasPanel;
       brTail,brApplyText,brDeleteBalloon: Button.Enabled:=HasBalloon;
       brDeleteTail: Button.Enabled:=HasBalloon and (FTailIndex>=0) and (FTailIndex<Page.Balloons[FBalloonIndex].Tails.Count);
@@ -620,6 +629,7 @@ begin
   for I:=0 to High(FModeMenu) do begin FModeMenu[I].Enabled:=CanEdit; FModeMenu[I].Checked:=FTabs.ActivePageIndex=I; end;
   FModeTitle.Caption:=FTabs.ActivePage.Caption;
   FDetachImageMenu.Enabled:=HasPanel and (FTabs.ActivePageIndex=2) and (Page.Panels[FPanelIndex].ImageID<>'');
+  RefreshPrimaryWorkspace(Self);
 end;
 procedure TMainForm.ShowPageStatus;
 var P: TComicPanel; IDs: TDictionary<string,Boolean>; Missing,Duplicate,Outside: Integer; Frame: TRectF;
@@ -670,15 +680,7 @@ begin
   FImagePopup.Popup(Position.X,Position.Y);
 end;
 procedure TMainForm.NewProject(Sender: TObject);
-var Title,Episode: string; P: TComicProject;
-begin
-  if not HasCharacter then begin Characters(nil); if not HasCharacter then Exit; end;
-  if not ConfirmLeave then Exit;
-  Title:=''; Episode:='第1話'; if not InputQuery('新規作品','作品タイトル',Title) or (Trim(Title)='') then Exit;
-  if not InputQuery('新規作品','話数',Episode) then Exit;
-  P:=TComicProject.Create; try P.Initialize(Trim(Title),Trim(Episode)); except P.Free; raise; end;
-  AdoptProject(P,False); Images(nil);
-end;
+begin NewWorkspaceProject(Self); end;
 procedure TMainForm.PageSettings(Sender: TObject);
 var Dialog: TComicPageDialog;
 begin
@@ -729,6 +731,7 @@ begin
   FSelectedPanels.Clear; FDragGroup:=nil; FEffectIndex:=-1;
   FDragVertices:=nil; FDragSnapshot:=''; FPageDropIndex:=-1;
   FreeAndNil(FProject); FProject:=Project;
+  FPrimaryIndex:=0; FTabs.ActivePageIndex:=0; FLastAssetID:='';
   FPageIndex:=Min(0,FProject.Pages.Count-1); FPanelIndex:=-1; FBalloonIndex:=-1; FDirty:=Dirty;
   FUndo.Clear; FRedo.Clear; FRenderer.ClearCache; ResetViewport; RefreshUI;
 end;
@@ -751,27 +754,7 @@ begin
   finally D.Free; end;
 end;
 procedure TMainForm.OpenScript(Sender: TObject);
-var D: TOpenDialog; Before,Text,Title: string; P: TComicProject; Script: TComicScript; Imported: TScriptImportResult;
-begin
-  CloseImageWorkspace; CancelDrag;
-  D:=TOpenDialog.Create(Self);
-  try
-    D.Filter:='台本テキスト (*.txt)|*.txt'; D.Options:=[ofFileMustExist,ofPathMustExist,ofNoChangeDir,ofEnableSizing];
-    if not D.Execute then Exit;
-    if TFile.GetSize(D.FileName)>4*1024*1024 then raise Exception.Create('台本は4MB以下にしてください。');
-    Text:=TFile.ReadAllText(D.FileName,TEncoding.UTF8);
-  finally D.Free; end;
-  if FProject=nil then begin
-    Script:=TComicScript.Create;
-    try Script.Read(Text); Title:=Script.Work.Get('作品名',Script.Work.Get('タイトル','台本からの試作')); finally Script.Free; end;
-    P:=TComicProject.Create;
-    try P.Initialize(Trim(Title),'第1話'); except P.Free; raise; end;
-    AdoptProject(P,False);
-  end;
-  Before:=FProject.Snapshot;
-  Imported:=ImportComicScript(FProject,FCharacters,Text); FinishImageManagement(Before);
-  FStatus.SimpleText:=Imported.Summary; Images(nil);
-end;
+begin ImportWorkspaceScript(Self); end;
 function TMainForm.SelectedScriptImage: string;
 var B: TComicBalloon; P: TComicPanel;
 begin
@@ -839,21 +822,12 @@ end;
 procedure TMainForm.ClearRecent(Sender: TObject);
 begin if not FRecentWritable then Exit; FRecent.Clear(TPath.Combine(DataRoot,'Presets\RecentProjects.json')); RefreshRecentMenu; end;
 procedure TMainForm.Characters(Sender: TObject);
-var D: TAssetDialog;
-begin
-  CloseImageWorkspace;
-  if not FCharacterLibraryWritable then
-    try ReadAssets(FCharacters,TPath.Combine(DataRoot,'Characters\Library.json')); NormalizeCharacters(FCharacters); FCharacterLibraryWritable:=True;
-    except on E: Exception do if not FTesting then Notify(E.Message); end;
-  D:=TAssetDialog.CreateManager(Self,FCharacters,nil,True,FCharacterLibraryWritable,nil,nil,GenerateAsset,CancelGeneration);
-  FAssetManager:=D;
-  try D.ShowModal; finally CancelGeneration(D); FAssetManager:=nil; D.Free; end; RefreshUI;
-end;
+begin PrimaryClick(FPrimaryButtons[2]); end;
 procedure TMainForm.Images(Sender: TObject);
 begin
   CancelDrag;
   if not NeedProject then Exit;
-  FModeButtons[5].Click;
+  PrimaryClick(FPrimaryButtons[1]);
 end;
 procedure TMainForm.FinishImageManagement(const Before: string; AlreadyPersisted: Boolean);
 begin
@@ -874,7 +848,7 @@ begin RemoveSelectedPages(True); end;
 procedure TMainForm.RemoveSelectedPages(Ask: Boolean);
 var Indices: TList<Integer>; I: Integer;
 begin
-  if (Page=nil) or not HasCharacter then Exit;
+  if Page=nil then Exit;
   Indices:=TList<Integer>.Create;
   try
     for I:=0 to FPages.Count-1 do if FPages.Selected[I] then Indices.Add(I);
@@ -968,7 +942,6 @@ procedure TMainForm.ApplyLayout(Layout: TComicLayout; InsertAt: Integer);
 var NewPage: TComicPage;
 begin
   if not NeedProject or (Layout=nil) then Exit;
-  if FImages.Count=0 then begin Notify('先に画像管理で使用する画像を登録してください。'); Exit; end;
   if InsertAt<0 then begin
     if Page=nil then Exit; Checkpoint; Layout.Apply(Page,FProject.Width,FProject.Height);
   end else begin
@@ -1070,8 +1043,8 @@ begin
 end;
 procedure TMainForm.PagesDragOver(Sender,Source: TObject; X,Y: Integer; State: TDragState; var Accept: Boolean);
 begin
-  Accept:=(FProject<>nil) and HasCharacter and (((Source=FPages) and (FPages.SelCount>0)) or
-    ((Source=FLayoutList) and (FLayoutList.ItemIndex>=0) and (FImages.Count>0)));
+  Accept:=(FProject<>nil) and (((Source=FPages) and (FPages.SelCount>0)) or
+    ((Source=FLayoutList) and (FLayoutList.ItemIndex>=0)));
   if Accept and (State<>dsDragLeave) then begin FPageDropIndex:=PageDropIndex(Y);
     FStatus.SimpleText:=Format('%d ページ目の前に挿入します。',[FPageDropIndex+1]); end
   else FPageDropIndex:=-1;
@@ -1083,7 +1056,7 @@ procedure TMainForm.PagesDragDrop(Sender,Source: TObject; X,Y: Integer);
 var At,I,Before: Integer; Ordered,Moved: TList<TComicPage>; Current: TComicPage; Same: Boolean;
 begin
   CancelDrag;
-  if (FProject=nil) or not HasCharacter then Exit; At:=PageDropIndex(Y); FPageDropIndex:=-1;
+  if FProject=nil then Exit; At:=PageDropIndex(Y); FPageDropIndex:=-1;
   if Source=FLayoutList then begin
     if FLayoutList.ItemIndex>=0 then ApplyLayout(TComicLayout(FLayoutList.Items.Objects[FLayoutList.ItemIndex]),At); Exit;
   end;
@@ -1152,8 +1125,7 @@ begin
   C:=FCanvas.Canvas; C.Brush.Color:=$302B28; C.FillRect(FCanvas.ClientRect);
   if Page=nil then begin
     C.Font.Name:='Yu Gothic UI'; C.Font.Size:=15; C.Font.Color:=$D9D9D9; C.Brush.Style:=bsClear;
-    if not HasCharacter then C.TextOut(36,80,'1. キャラ管理で人物と参照画像を登録')
-    else C.TextOut(36,80,'2. 新規作品を作成、または作品を開く');
+    C.TextOut(36,80,'新規作品を作成、または作品を開く');
     C.Brush.Style:=bsSolid; Exit;
   end;
   UpdateViewport;
@@ -1437,7 +1409,7 @@ begin
     if Warnings<>'' then Warnings:=Warnings+sLineBreak;
     Warnings:=Warnings+Format('同じ画像の重複配置：%d コマ。重複したまま出力します。',[Duplicate]);
   end;
-  Result:=TComicExportDialog.CreateOptions(Self,TPath.Combine(FProject.Folder,'Output'),OpenOutput,Warnings);
+  Result:=TComicExportDialog.CreateOptions(Self,FProject.Folder,OpenOutput,Warnings);
 end;
 procedure TMainForm.Notify(const Message: string);
 begin if FTesting then raise Exception.Create(Message) else ShowMessage(Message); end;
@@ -1446,7 +1418,7 @@ var All: Boolean; N: Integer; Output: string; D: TComicExportDialog;
 begin
   CancelDrag;
   if not NeedProject then Exit;
-  Output:=TPath.Combine(FProject.Folder,'Output'); ForceDirectories(Output);
+  Output:=FProject.Folder; ForceDirectories(Output);
   D:=CreateExportOptions;
   try
     D.ShowModal; if not D.Accepted(All) then Exit;
@@ -1460,7 +1432,7 @@ end;
 procedure TMainForm.CloseCheck(Sender: TObject; var CanClose: Boolean);
 begin CancelDrag; CanClose:=ConfirmLeave; end;
 procedure TMainForm.OpenOutput(Sender: TObject);
-begin if FProject<>nil then ShellExecute(Handle,'open',PChar(TPath.Combine(FProject.Folder,'Output')),nil,nil,SW_SHOWNORMAL); end;
+begin if FProject<>nil then ShellExecute(Handle,'open',PChar(FProject.Folder),nil,nil,SW_SHOWNORMAL); end;
 procedure TMainForm.Key(Sender: TObject; var Key: Word; Shift: TShiftState);
 var Panel: TComicPanel;
 begin

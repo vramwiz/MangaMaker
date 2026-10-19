@@ -110,13 +110,13 @@ procedure TComicWorkspaceEffectsHelper.ExecuteApplyEffectMaterial(PanelIndex: In
 var Overlay: TComicOverlay; Source,Dest: string; PNG: TPngImage; Bounds: TRectF;
 begin
   CancelDrag;
-  if (Page=nil) or (PanelIndex<0) or (PanelIndex>=Page.Panels.Count) or (Material=nil) or not HasCharacter then Exit;
+  if (Page=nil) or (PanelIndex<0) or (PanelIndex>=Page.Panels.Count) or (Material=nil) then Exit;
   if Page.Panels[PanelIndex].Overlays.Count>=1000 then raise Exception.Create('コマの効果素材は1000件までです。');
   Source:=EffectMaterialPath(Material); PNG:=TPngImage.Create;
   try PNG.LoadFromFile(Source); if (PNG.Width<1) or (PNG.Height<1) or (Int64(PNG.Width)*PNG.Height>64000000) then raise Exception.Create('効果素材のサイズが不正です。');
     Bounds:=FitEffectBounds(Page.Panels[PanelIndex].Bounds,PNG.Width,PNG.Height);
   finally PNG.Free; end;
-  Overlay:=TComicOverlay.Create; Overlay.MaterialID:=Material.ID; Overlay.FileName:='Effects\'+NewUID+'.png'; Dest:=SafeChild(FProject.Folder,Overlay.FileName);
+  Overlay:=TComicOverlay.Create; Overlay.MaterialID:=Material.ID; Overlay.FileName:='Effect-'+NewUID+'.png'; Dest:=SafeChild(FProject.Folder,Overlay.FileName);
   Overlay.Bounds:=Bounds;
   try
     ForceDirectories(ExtractFilePath(Dest)); TFile.Copy(Source,Dest,False); Checkpoint;

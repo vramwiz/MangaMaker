@@ -91,7 +91,7 @@ function TComicImageList.SameItems(Project: TComicProject): Boolean;
 var I,At: Integer; Asset: TComicAsset;
 begin
   At:=0; Result:=False;
-  for Asset in Project.Assets do if Asset.FileName<>'' then begin
+  for Asset in Project.Assets do if Asset.ImageFile<>'' then begin
     I:=At; Inc(At);
     if (I>=Count) or (I>=FIDs.Count) then Exit;
     if (FIDs[I]<>Asset.ID) or (Items[I]<>Asset.Name) then Exit;
@@ -106,7 +106,7 @@ begin
   if (Key=FProjectKey) and SameItems(Project) then begin
     // Undoでは同じIDのオブジェクトが作り直される。表示を保ち、参照だけを差し替える。
     I:=0;
-    for Asset in Project.Assets do if Asset.FileName<>'' then begin
+    for Asset in Project.Assets do if Asset.ImageFile<>'' then begin
       if Items.Objects[I]<>Asset then Items.Objects[I]:=Asset; Inc(I);
     end;
     Exit;
@@ -116,7 +116,7 @@ begin
   Items.BeginUpdate;
   try
     Clear; FIDs.Clear;
-    for Asset in Project.Assets do if Asset.FileName<>'' then begin
+    for Asset in Project.Assets do if Asset.ImageFile<>'' then begin
       Items.AddObject(Asset.Name,Asset); FIDs.Add(Asset.ID);
     end;
     ItemIndex:=FIDs.IndexOf(SelectedID); TopIndex:=Max(0,Min(Top,Count-1)); FProjectKey:=Key;

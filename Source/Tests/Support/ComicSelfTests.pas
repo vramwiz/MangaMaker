@@ -11,7 +11,7 @@ uses Winapi.Windows, Winapi.Messages, Winapi.ShellAPI, Winapi.Imm,
   System.Hash, System.DateUtils, Vcl.Controls, Vcl.Forms,
   Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.ComCtrls, Vcl.Menus,
   Vcl.Dialogs, Vcl.Graphics, Vcl.Imaging.pngimage, ComicModel,
-  ComicAssetDialog, ComicLayouts, ComicExport, ComicEditingTests, ComicAssetWorkspaceTests,
+  ComicAssetDialog, ComicLayouts, ComicExport, ComicEditingTests, ComicAssetWorkspaceTests, ComicProjectWorkflowTests,
   ComicGeometryTests, ComicImageLayoutTests, ComicTextTests, ComicInlineTextTests, ComicBalloonsTests, ComicAssetsTests,
   ComicIntegrationTests, ComicLibrariesTests, ComicRenderingTests, ComicWorkspaceTests, ComicMaterialPaneTests, ComicScriptTests, ComicAssetDialogTests, ComicPlacementTests, ComicEffectRotationTests, ComicPageResizeTests, ComicDragDropTests, ComicBalloonSelectionTests, ComicPageRefreshTests, ComicPageDefaultsTests;
 type
@@ -282,5 +282,9 @@ end;
 
 
 procedure RunSelfTests(Host: TComicTestForm; const Folder: string);
-begin Host.TestFolder:=Folder; Host.Execute; end;
+begin
+  Host.TestFolder:=Folder;
+  if GetEnvironmentVariable('MANGAMAKER_SELFTEST_SCOPE')='project-workflow' then RunProjectWorkflowChecks(Host)
+  else Host.Execute;
+end;
 end.

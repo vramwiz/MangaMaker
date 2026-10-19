@@ -17,7 +17,7 @@ type
     function Frame: TRectF;
   end;
   TComicAsset = class
-    ID, ParentID, Name, Notes, FileName: string;
+    ID, ParentID, Name, Notes, FileName,RelativePath: string;
     CharacterID,CharacterName,CharacterNotes,StateName: string;
     SourceID,SceneID,TitleText,EpisodeText: string;
     CharacterRefs: TArray<string>;
@@ -25,6 +25,8 @@ type
     constructor Create;
     function Json: TJSONObject;
     procedure Read(J: TJSONObject);
+    function ImageFile: string;
+    function ImagePath(const Root: string): string;
   end;
   TComicOverlay = class
     ID,MaterialID,FileName: string;
@@ -118,6 +120,9 @@ type
   TComicPage = class
     ID: string;
     Revision, OutputRevision: Integer;
+    // 現在は共通基準を継承する。ページ別用紙設定を有効化するときの保存領域。
+    HasOwnBasis: Boolean;
+    OwnBasis: TComicPageBasis;
     Panels: TObjectList<TComicPanel>;
     Balloons: TObjectList<TComicBalloon>;
     constructor Create;
@@ -132,6 +137,7 @@ type
     Width, Height, ExportCount: Integer;
     MarginLeft,MarginTop,MarginRight,MarginBottom: Integer;
     Assets: TObjectList<TComicAsset>;
+    CharacterReferences: TObjectList<TComicAsset>;
     Pages: TObjectList<TComicPage>;
     constructor Create;
     destructor Destroy; override;
@@ -141,7 +147,7 @@ type
     procedure Save;
     procedure SaveDraft;
     procedure Load(const FileName: string);
-    procedure Initialize(const ATitle, AEpisode: string);
+    procedure Initialize(const ATitle, AEpisode: string; const AFolder: string='');
     function Asset(const UID: string): TComicAsset;
     function ImagePath(const UID: string): string;
     function ImportImage(const FileName, ParentID: string): TComicAsset;
@@ -245,12 +251,17 @@ end;
 
 constructor TComicAsset.Create;
 begin inherited; ID := NewUID; end;
+function TComicAsset.ImageFile: string;
+begin if RelativePath<>'' then Result:=RelativePath else Result:=FileName; end;
+function TComicAsset.ImagePath(const Root: string): string;
+begin Result:=''; if ImageFile<>'' then Result:=SafeChild(Root,ImageFile); end;
 function TComicAsset.Json: TJSONObject;
 var References: TJSONArray; Ref: string;
 begin
   Result := TJSONObject.Create;
   Result.AddPair('id',ID); Result.AddPair('parentId',ParentID);
   Result.AddPair('name',Name); Result.AddPair('notes',Notes); Result.AddPair('file',FileName);
+  Result.AddPair('relativePath',RelativePath);
   Result.AddPair('characterId',CharacterID); Result.AddPair('characterName',CharacterName);
   Result.AddPair('characterNotes',CharacterNotes); Result.AddPair('stateName',StateName);
   Result.AddPair('sourceId',SourceID); Result.AddPair('sceneId',SceneID); Put(Result,'titleImage',TitleImage);
@@ -262,6 +273,9 @@ var Value: TJSONValue; References: TJSONArray; IDs: TDictionary<string,Boolean>;
 begin
   ID:=JStr(J,'id',ID); ParentID:=JStr(J,'parentId',''); Name:=JStr(J,'name','');
   Notes:=JStr(J,'notes',''); FileName:=JStr(J,'file','');
+  RelativePath:=JStr(J,'relativePath','');
+  if (RelativePath<>'') and TPath.IsPathRooted(RelativePath) then
+    raise Exception.Create('新しい画像参照は作品フォルダからの相対パスで指定してください。');
   CharacterID:=JStr(J,'characterId',''); CharacterName:=JStr(J,'characterName','');
   CharacterNotes:=JStr(J,'characterNotes',''); StateName:=JStr(J,'stateName','');
   SourceID:=JStr(J,'sourceId',''); SceneID:=JStr(J,'sceneId',''); TitleText:=JStr(J,'titleText',''); EpisodeText:=JStr(J,'episodeText','');
@@ -555,17 +569,30 @@ end;
 destructor TComicPage.Destroy;
 begin Panels.Free; Balloons.Free; inherited; end;
 function TComicPage.Json: TJSONObject;
-var A: TJSONArray; P: TComicPanel; B: TComicBalloon;
+var A: TJSONArray; P: TComicPanel; B: TComicBalloon; Basis: TJSONObject;
 begin
   Result:=TJSONObject.Create; Result.AddPair('id',ID);
   Put(Result,'revision',Revision); Put(Result,'outputRevision',OutputRevision);
+  if HasOwnBasis then begin
+    Basis:=TJSONObject.Create; Result.AddPair('pageBasis',Basis);
+    Put(Basis,'width',OwnBasis.Width); Put(Basis,'height',OwnBasis.Height);
+    Put(Basis,'left',OwnBasis.Left); Put(Basis,'top',OwnBasis.Top);
+    Put(Basis,'right',OwnBasis.Right); Put(Basis,'bottom',OwnBasis.Bottom);
+  end;
   A:=TJSONArray.Create; Result.AddPair('panels',A); for P in Panels do A.AddElement(P.Json);
   A:=TJSONArray.Create; Result.AddPair('balloons',A); for B in Balloons do A.AddElement(B.Json);
 end;
 procedure TComicPage.Read(J: TJSONObject);
-var V: TJSONValue; A: TJSONArray; P: TComicPanel; B: TComicBalloon;
+var V: TJSONValue; A: TJSONArray; P: TComicPanel; B: TComicBalloon; Basis: TJSONObject;
 begin
   ID:=JStr(J,'id',ID); Revision:=Round(JNum(J,'revision',1)); OutputRevision:=Round(JNum(J,'outputRevision',-1));
+  Basis:=J.GetValue<TJSONObject>('pageBasis',nil); HasOwnBasis:=Basis<>nil;
+  if HasOwnBasis then begin
+    OwnBasis.Width:=Round(JNum(Basis,'width',0)); OwnBasis.Height:=Round(JNum(Basis,'height',0));
+    OwnBasis.Left:=Round(JNum(Basis,'left',0)); OwnBasis.Top:=Round(JNum(Basis,'top',0));
+    OwnBasis.Right:=Round(JNum(Basis,'right',0)); OwnBasis.Bottom:=Round(JNum(Basis,'bottom',0));
+    if not OwnBasis.Valid then raise Exception.Create('ページ別の用紙設定が不正です。');
+  end;
   Panels.Clear; Balloons.Clear;
   A:=J.GetValue<TJSONArray>('panels'); if A<>nil then for V in A do begin
     if not (V is TJSONObject) then raise Exception.Create('コマデータが不正です。');
@@ -578,9 +605,10 @@ constructor TComicProject.Create;
 begin
   inherited; Width:=DefaultPageWidth; Height:=DefaultPageHeight; MarginLeft:=60; MarginTop:=60; MarginRight:=60; MarginBottom:=60;
   Assets:=TObjectList<TComicAsset>.Create; Pages:=TObjectList<TComicPage>.Create;
+  CharacterReferences:=TObjectList<TComicAsset>.Create;
 end;
 destructor TComicProject.Destroy;
-begin Assets.Free; Pages.Free; inherited; end;
+begin CharacterReferences.Free; Assets.Free; Pages.Free; inherited; end;
 function TComicProject.Json: TJSONObject;
 var A: TJSONArray; P: TComicPage; I: TComicAsset; Version: Integer;
 begin
@@ -594,6 +622,7 @@ begin
   Put(Result,'marginLeft',MarginLeft); Put(Result,'marginTop',MarginTop);
   Put(Result,'marginRight',MarginRight); Put(Result,'marginBottom',MarginBottom);
   A:=TJSONArray.Create; Result.AddPair('assets',A); for I in Assets do A.AddElement(I.Json);
+  A:=TJSONArray.Create; Result.AddPair('characterReferences',A); for I in CharacterReferences do A.AddElement(I.Json);
   A:=TJSONArray.Create; Result.AddPair('pages',A); for P in Pages do A.AddElement(P.Json);
 end;
 function TComicProject.Snapshot: string;
@@ -629,9 +658,15 @@ begin
     A:=J.GetValue<TJSONArray>('assets'); if A<>nil then for V in A do begin
       if not (V is TJSONObject) then raise Exception.Create('画像データが不正です。');
       I:=TComicAsset.Create; Assets.Add(I); I.Read(TJSONObject(V));
-      if I.FileName<>'' then SafeChild(Folder,I.FileName);
+      if I.ImageFile<>'' then I.ImagePath(Folder);
     end;
     ValidateAssetTree(Assets);
+    CharacterReferences.Clear; A:=J.GetValue<TJSONArray>('characterReferences',nil);
+    if A<>nil then for V in A do begin
+      if not (V is TJSONObject) then raise Exception.Create('作品内の人物参照が不正です。');
+      I:=TComicAsset.Create; CharacterReferences.Add(I); I.Read(TJSONObject(V));
+      if I.ImageFile<>'' then I.ImagePath(Folder);
+    end;
     A:=J.GetValue<TJSONArray>('pages'); if A<>nil then for V in A do begin
       if not (V is TJSONObject) then raise Exception.Create('ページデータが不正です。');
       P:=TComicPage.Create; Pages.Add(P); P.Read(TJSONObject(V));
@@ -650,16 +685,16 @@ begin
   {$IFDEF DEBUG}PerfScope.Start(cpSaveDraft);{$ENDIF}
   if Folder='' then Exit;
   AtomicWrite(TPath.Combine(Folder,'Draft.json'),Snapshot);
-  for P in Pages do begin J:=P.Json; try AtomicWrite(SafeChild(Folder,'Pages\'+P.ID+'.json'),J.ToJSON); finally J.Free; end; end;
+  if ScriptSource<>'' then AtomicWrite(TPath.Combine(Folder,'Script.txt'),ScriptSource);
+  for P in Pages do begin J:=P.Json; try AtomicWrite(SafeChild(Folder,'Page-'+P.ID+'.json'),J.ToJSON); finally J.Free; end; end;
 end;
 procedure TComicProject.Load(const FileName: string);
 begin Folder:=ExtractFilePath(TPath.GetFullPath(FileName)); Restore(TFile.ReadAllText(FileName,TEncoding.UTF8)); end;
-procedure TComicProject.Initialize(const ATitle, AEpisode: string);
+procedure TComicProject.Initialize(const ATitle, AEpisode, AFolder: string);
 begin
   ID:=NewUID; Title:=ATitle; Episode:=AEpisode;
-  Folder:=TPath.Combine(DataRoot,'Projects\'+ID);
-  ForceDirectories(TPath.Combine(Folder,'Images')); ForceDirectories(TPath.Combine(Folder,'Pages'));
-  ForceDirectories(TPath.Combine(Folder,'Output')); Pages.Add(TComicPage.Create); Save;
+  if AFolder='' then Folder:=TPath.Combine(DataRoot,'Projects\'+ID) else Folder:=TPath.GetFullPath(AFolder);
+  ForceDirectories(Folder); Pages.Add(TComicPage.Create); Save;
 end;
 function TComicProject.Asset(const UID: string): TComicAsset;
 var A: TComicAsset;
@@ -677,14 +712,14 @@ begin
 end;
 function TComicProject.ImagePath(const UID: string): string;
 var A: TComicAsset;
-begin Result:=''; A:=Asset(UID); if (A<>nil) and (A.FileName<>'') then Result:=SafeChild(Folder,A.FileName); end;
+begin Result:=''; A:=Asset(UID); if A<>nil then Result:=A.ImagePath(Folder); end;
 function TComicProject.ImportImage(const FileName, ParentID: string): TComicAsset;
 begin
   Result:=TComicAsset.Create;
   try
     Result.ParentID:=ParentID; Result.Name:=TPath.GetFileNameWithoutExtension(FileName);
-    Result.FileName:='Images\'+Result.ID+LowerCase(ExtractFileExt(FileName));
-    TFile.Copy(FileName,SafeChild(Folder,Result.FileName),False); Assets.Add(Result);
+    Result.RelativePath:=Result.ID+LowerCase(ExtractFileExt(FileName));
+    TFile.Copy(FileName,Result.ImagePath(Folder),False); Assets.Add(Result);
   except Result.Free; raise; end;
 end;
 procedure WriteAssets(List: TObjectList<TComicAsset>; const FileName: string);
@@ -716,7 +751,7 @@ begin
     for V in TJSONArray(J) do begin
       if not (V is TJSONObject) then raise Exception.Create('キャラ情報が不正です。');
       I:=TComicAsset.Create; Prepared.Add(I); I.Read(TJSONObject(V));
-      if I.FileName<>'' then SafeChild(TPath.Combine(DataRoot,'Characters'),I.FileName);
+      if I.ImageFile<>'' then I.ImagePath(TPath.Combine(DataRoot,'Characters'));
     end;
     ValidateAssetTree(Prepared);
     for I in Prepared do for Existing in List do if I.ID=Existing.ID then raise Exception.Create('素材のIDが既存項目と重複しています。');

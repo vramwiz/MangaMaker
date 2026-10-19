@@ -29,8 +29,8 @@ begin
   Description:=Definition.Get('外見');
   if not (Description.Contains('三面図') or Description.Contains('参照画像')) then Exit;
   Candidate:=nil;
-  for A in Characters do if (A.ParentID='') and (A.FileName<>'') and
-    FileExists(SafeChild(TPath.Combine(DataRoot,'Characters'),A.FileName)) then begin
+  for A in Characters do if (A.ParentID='') and (A.ImageFile<>'') and
+    FileExists(SafeChild(TPath.Combine(DataRoot,'Characters'),A.ImageFile)) then begin
     if Candidate<>nil then Exit; Candidate:=A;
   end;
   if Candidate=nil then Exit;
@@ -191,7 +191,7 @@ begin
   if (Project=nil) or (Asset=nil) or (ScriptImageID(Project,Asset.ID)='') then Exit;
   if Asset.SourceID='' then Exit;
   Parent:=Project.Asset(Asset.SourceID);
-  if (Parent=nil) or (Parent.FileName='') or not FileExists(Project.ImagePath(Parent.ID)) then
+  if (Parent=nil) or (Parent.ImageFile='') or not FileExists(Project.ImagePath(Parent.ID)) then
     raise Exception.Create('台本の参照背景を先に生成または画像登録してください。');
 end;
 end.

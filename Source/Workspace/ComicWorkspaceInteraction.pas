@@ -190,7 +190,6 @@ begin
   if (Handle=0) and not FPageRect.Contains(Point(X,Y)) and not (FTool in [8,9]) then Exit;
   if FTool=9 then begin SplitClick(P); Exit; end;
   if FTool=8 then begin
-    if FImages.Count=0 then Exit;
     if not (ssAlt in Shift) then P:=SnapCreationPoint(P); PolygonClick(P); Exit;
   end;
   if FTool in [1,2,3,5,6,7,10,11] then begin RunWorkspacePlacementDown(Self,P,Shift); Exit; end;
@@ -446,7 +445,7 @@ procedure RunWorkspaceAssignImage(Form: TMainForm; Sender: TObject);
 begin Form.ExecuteAssignImage(Sender); end;
 procedure TComicWorkspaceInteractionHelper.ExecuteDragOver(Sender,Source: TObject; X,Y: Integer; State: TDragState; var Accept: Boolean);
 begin
-  Accept:=(Page<>nil) and ((Source=FImages) or HasCharacter) and FPageRect.Contains(Point(X,Y)) and
+  Accept:=(Page<>nil) and FPageRect.Contains(Point(X,Y)) and
     (((Source=FImages) and (FTabs.ActivePageIndex<>3) and (FImages.ItemIndex>=0) and (HitPanel(ToPage(X,Y))>=0)) or
      ((Source=FLayoutList) and (FLayoutList.ItemIndex>=0)) or
      ((Source=FEffectList) and (FEffectList.ItemIndex>=0) and (FTabs.ActivePageIndex=4) and (FEffectCategory.ItemIndex=0) and (HitPanel(ToPage(X,Y))>=0)));

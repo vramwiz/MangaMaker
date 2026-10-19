@@ -66,7 +66,6 @@ end;
 procedure TComicWorkspaceGeometryHelper.PlacementDown(const P: TPointF; Shift: TShiftState);
 var Q: TPointF;
 begin
-  if not (FTool in [7,11]) and (FImages.Count=0) then begin Notify('画像管理で画像を登録してください。'); Exit; end;
   Q:=PlacementPoint(P,Shift);
   if FFirst then CommitPlacement(Q)
   else begin

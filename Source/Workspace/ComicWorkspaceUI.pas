@@ -81,6 +81,11 @@ begin
   Item('画像生成の共通指示プリセット...',GenerationPresets);
   Item('漫画効果素材...',EffectMaterials);
   Item('-',nil); Item('2点配置をドラッグで操作',TogglePlacementInput); FDragPlacementMenu:=N; N.Checked:=True;
+  FPrimaryBar:=TPanel.Create(Self); FPrimaryBar.Parent:=Self; FPrimaryBar.Align:=alTop;
+  FPrimaryBar.Height:=D(52); FPrimaryBar.BevelOuter:=bvLowered; FPrimaryBar.BevelWidth:=1; FPrimaryBar.Visible:=False;
+  FPrimaryButtons[0]:=Icon(FPrimaryBar,'ページ編集',8,6,160,40,ciPanelEdit,0,brAlways,PrimaryClick,True);
+  FPrimaryButtons[1]:=Icon(FPrimaryBar,'画像管理',176,6,160,40,ciImageLibrary,1,brAlways,PrimaryClick,True);
+  FPrimaryButtons[2]:=Icon(FPrimaryBar,'キャラ管理',344,6,160,40,ciCharacters,2,brAlways,PrimaryClick,True);
   FStatus:=TStatusBar.Create(Self); FStatus.Parent:=Self; FStatus.SimplePanel:=True; FStatus.Align:=alBottom;
   FStatus.Visible:=False;
   // 操作領域の境界を細い縁で示し、同色のパネルが一続きに見えるのを防ぐ。
@@ -104,11 +109,14 @@ begin
   FToolsPanel:=Right;
   Modes:=TPanel.Create(Self); Modes.Parent:=Right; Modes.Align:=alTop; Modes.Height:=D(88); Modes.BevelOuter:=bvLowered; Modes.BevelWidth:=1;
   FModeButtons[5]:=Icon(Modes,'画像管理 (Ctrl+6)',8,8,44,44,ciImageLibrary,5,brMode,ModeClick);
+  // 旧ショートカットの入口は残すが、画像管理は上位の画面切替へ移す。
+  FModeButtons[5].Visible:=False; FModeButtons[5].TabStop:=False;
   FModeButtons[0]:=Icon(Modes,'コマ割り管理 (Ctrl+1)',58,8,44,44,ciLayout,0,brMode,ModeClick);
   FModeButtons[1]:=Icon(Modes,'コマ編集 (Ctrl+2)',108,8,44,44,ciPanelEdit,1,brMode,ModeClick);
   FModeButtons[2]:=Icon(Modes,'画像配置 (Ctrl+3)',158,8,44,44,ciImage,2,brMode,ModeClick);
   FModeButtons[3]:=Icon(Modes,'吹き出し (Ctrl+4)',208,8,44,44,ciBalloonEllipse,3,brMode,ModeClick);
   FModeButtons[4]:=Icon(Modes,'漫画効果 (Ctrl+5)',258,8,44,44,ciEffects,4,brMode,ModeClick);
+  for I:=0 to 4 do FModeButtons[I].Left:=D(8+I*58);
   FModeTitle:=TLabel.Create(Self); FModeTitle.Parent:=Modes; FModeTitle.AutoSize:=False;
   FModeTitle.SetBounds(D(12),D(60),D(282),D(24)); FModeTitle.Font.Style:=[fsBold];
   FTabs:=TPageControl.Create(Self); FTabs.Parent:=Right; FTabs.Align:=alClient;

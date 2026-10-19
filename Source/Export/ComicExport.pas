@@ -48,11 +48,11 @@ function ExportSequence(Project: TComicProject; Renderer: TComicRenderer; All: B
 var Output,Cache,FileName,Dest,Signature,SignatureFile,StateFile: string; I,ManagedCount: Integer;
   P: TComicPage; Images: TDictionary<string,string>;
 begin
-  Result:=0; Output:=TPath.Combine(Project.Folder,'Output'); Cache:=TPath.Combine(Output,'.cache');
+  Result:=0; Output:=Project.Folder; Cache:=Output;
   ForceDirectories(Cache); Images:=TDictionary<string,string>.Create;
   Renderer.ClearCache;
   try
-    StateFile:=TPath.Combine(Cache,'sequence-count.txt'); ManagedCount:=Project.ExportCount;
+    StateFile:=TPath.Combine(Cache,'Export-sequence-count.txt'); ManagedCount:=Project.ExportCount;
     if FileExists(StateFile) then
       if not TryStrToInt(TFile.ReadAllText(StateFile,TEncoding.UTF8),ManagedCount) then
         raise Exception.Create('Invalid PNG sequence history.');
@@ -60,7 +60,7 @@ begin
     // 部分出力も含めたファイル所有関係をUndoとは別に持ち、履歴復元で他の連番を消さない。
     AtomicWrite(StateFile,IntToStr(Max(ManagedCount,Project.Pages.Count)));
     for I:=0 to Project.Pages.Count-1 do begin
-      P:=Project.Pages[I]; FileName:=SafeChild(Cache,P.ID+'.png'); SignatureFile:=FileName+'.signature';
+      P:=Project.Pages[I]; FileName:=SafeChild(Cache,'Export-cache-'+P.ID+'.png'); SignatureFile:=FileName+'.signature';
       Signature:=RenderSignature(Project,P,Images);
       if All or not FileExists(FileName) or not FileExists(SignatureFile) or
         (TFile.ReadAllText(SignatureFile,TEncoding.UTF8)<>Signature) then begin

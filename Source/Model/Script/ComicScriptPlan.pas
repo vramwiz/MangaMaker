@@ -30,7 +30,7 @@ begin
     Inc(Count); Result:=A;
   end;
   if Count<>1 then begin Result:=nil; Error:=Definition.ID+'：登録名「'+Name+'」状態「'+State+'」に一致する参照が'+IntToStr(Count)+'件です。'; Exit; end;
-  if (Result.FileName='') or not FileExists(SafeChild(TPath.Combine(DataRoot,'Characters'),Result.FileName)) then begin
+  if (Result.ImageFile='') or not FileExists(SafeChild(TPath.Combine(DataRoot,'Characters'),Result.ImageFile)) then begin
     Result:=nil; Error:=Definition.ID+'：参照画像がありません。';
   end;
 end;

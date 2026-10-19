@@ -11,7 +11,7 @@ uses Winapi.Windows, Winapi.Messages, Winapi.ShellAPI, Winapi.Imm,
   System.Hash, System.DateUtils, Vcl.Controls, Vcl.Forms,
   Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.ComCtrls, Vcl.Menus,
   Vcl.Dialogs, Vcl.Graphics, Vcl.Imaging.pngimage, ComicModel,
-  ComicGenerationPresets, ComicAssetEditing, ComicImageAdoption, ComicScriptGeneration, ComicWorkspaceGeneration;
+  ComicGenerationPresets, ComicAssetEditing, ComicImageAdoption, ComicScriptGeneration, ComicWorkspaceGeneration, ComicProjectReferences;
 type
   TComicWorkspaceBridgeHelper = class helper for TMainForm
     procedure HandleWorkspaceBridge(const Request: string; out Reply: string);
@@ -44,7 +44,6 @@ var Value: TJSONValue; Input,Output,Data,Info: TJSONObject; Items: TJSONArray;
     else raise Exception.Create('libraryはcharactersまたはimagesで指定してください。');
     if Mutating then begin
       if Characters and not FCharacterLibraryWritable then raise Exception.Create('共通キャラは読み取りのみです。');
-      if not Characters and not HasCharacter then raise Exception.Create('有効なキャラクターを先に登録してください。');
     end;
   end;
   function FindAsset(const UID: string): TComicAsset;
@@ -52,8 +51,8 @@ var Value: TJSONValue; Input,Output,Data,Info: TJSONObject; Items: TJSONArray;
   begin Result:=nil; for Item in Assets do if Item.ID=UID then Exit(Item); end;
   function AssetData(Item: TComicAsset): TJSONObject;
   begin
-    Result:=Item.Json; if Item.FileName<>'' then Result.AddPair('referencePath',SafeChild(Root,Item.FileName)) else Result.AddPair('referencePath','');
-    if Characters then Result.AddPair('storageFolder',Root) else Result.AddPair('storageFolder',TPath.Combine(Root,'Images'));
+    Result:=Item.Json; if Item.ImageFile<>'' then Result.AddPair('referencePath',Item.ImagePath(Root)) else Result.AddPair('referencePath','');
+    if Characters then Result.AddPair('storageFolder',Root) else Result.AddPair('storageFolder',Root);
     if (FAssetManager<>nil) and (FAssetManager.CurrentAsset=Item) then begin
       Result.AddPair('draftName',FAssetManager.DraftName.Text); Result.AddPair('draftNotes',FAssetManager.DraftNotes.Text);
       if FAssetManager.IsCharacters then begin
@@ -64,8 +63,7 @@ var Value: TJSONValue; Input,Output,Data,Info: TJSONObject; Items: TJSONArray;
   function CharacterData(Item: TComicAsset): TJSONObject;
   begin
     Result:=Item.Json;
-    if Item.FileName<>'' then Result.AddPair('referencePath',SafeChild(TPath.Combine(DataRoot,'Characters'),Item.FileName))
-    else Result.AddPair('referencePath','');
+    Result.AddPair('referencePath',ProjectCharacterPath(FProject,FCharacters,Item.ID));
     if (FAssetManager<>nil) and FAssetManager.IsCharacters and (FAssetManager.CurrentAsset<>nil) and
       (FAssetManager.CurrentAsset.CharacterID=Item.CharacterID) then begin
       Result.AddPair('draftCharacterName',FAssetManager.CommonName.Text); Result.AddPair('draftCharacterNotes',FAssetManager.CommonNotes.Text);
@@ -74,7 +72,7 @@ var Value: TJSONValue; Input,Output,Data,Info: TJSONObject; Items: TJSONArray;
   procedure Persist;
   begin
     if Characters then WriteAssets(Assets,TPath.Combine(Root,'Library.json'))
-    else AtomicWrite(TPath.Combine(Root,'Draft.json'),FProject.Snapshot);
+    else begin CaptureProjectReferences(FProject,FCharacters); AtomicWrite(TPath.Combine(Root,'Draft.json'),FProject.Snapshot); end;
   end;
   procedure Published;
   var Warnings: TJSONArray;
@@ -118,7 +116,7 @@ begin
         (Screen.ActiveCustomForm<>FAssetManager) then raise Exception.Create('別の編集画面を閉じてから登録してください。');
       if Action='status' then begin
         Data.AddPair('version',TJSONNumber.Create(1)); Data.AddPair('characterLibraryWritable',TJSONBool.Create(FCharacterLibraryWritable));
-        Data.AddPair('canProduce',TJSONBool.Create(HasCharacter));
+        Data.AddPair('canProduce',TJSONBool.Create(FProject<>nil));
         if FProject<>nil then begin
           Info:=TJSONObject.Create; Data.AddPair('project',Info); Info.AddPair('id',FProject.ID); Info.AddPair('title',FProject.Title);
           Info.AddPair('episode',FProject.Episode); Info.AddPair('folder',FProject.Folder); Info.AddPair('pageId','');
@@ -173,12 +171,12 @@ begin
             if (Asset.SourceID<>'') and (Source=nil) then Data.AddPair('sourceMissing',TJSONBool.Create(True));
             Items:=TJSONArray.Create; Data.AddPair('references',Items);
             for RefID in Asset.CharacterRefs do begin
-              Ref:=AssetByID(FCharacters,RefID); RefData:=TJSONObject.Create; Items.AddElement(RefData);
+              Ref:=ProjectCharacter(FProject,FCharacters,RefID); RefData:=TJSONObject.Create; Items.AddElement(RefData);
               RefData.AddPair('id',RefID);
               if Ref=nil then RefData.AddPair('missing',TJSONBool.Create(True))
               else begin
-                RefData.AddPair('asset',CharacterData(Ref)); Parent:=CharacterRoot(FCharacters,Ref);
-                if Parent<>Ref then begin RefParent:=CharacterData(Parent); RefData.AddPair('parent',RefParent); end;
+                RefData.AddPair('asset',CharacterData(Ref)); Parent:=ProjectCharacter(FProject,FCharacters,Ref.ParentID);
+                if (Parent<>nil) and (Parent<>Ref) then begin RefParent:=CharacterData(Parent); RefData.AddPair('parent',RefParent); end;
               end;
             end;
           end;
@@ -196,7 +194,7 @@ begin
           if (Mode='alternate_scene') and (ParentID<>'') then raise Exception.Create('別位置の背景は親階層へ追加します。');
           RefProbe:=TComicAsset.Create;
           try RefProbe.Read(Input); ParsedRefs:=Copy(RefProbe.CharacterRefs); finally RefProbe.Free; end;
-          for RefID in ParsedRefs do if AssetByID(FCharacters,RefID)=nil then raise Exception.Create('参照人物IDが見つかりません：'+RefID);
+          for RefID in ParsedRefs do if ProjectCharacter(FProject,FCharacters,RefID)=nil then raise Exception.Create('参照人物IDが見つかりません：'+RefID);
           if ((Mode='scene') or (Mode='alternate_scene')) and (Length(ParsedRefs)>0) then raise Exception.Create('背景の親は人物を参照しません。');
         end else if (Mode<>'') or (SourceID<>'') or (Input.GetValue('characterIds')<>nil) then raise Exception.Create('人物登録には画像用の追加方式を指定できません。');
         if FAssetManager<>nil then FAssetManager.FlushDraft;
@@ -220,7 +218,7 @@ begin
             not GenerationTargetMatches(FGenerationActive) then raise Exception.Create('生成要求が失効したか、対象が変更されました。');
           AlreadyAdopted:=FGenerationActive.Adopted;
         end;
-        if not AlreadyAdopted and (Input.GetValue('expectedFileName')<>nil) and (Text('expectedFileName',False,1024)<>Asset.FileName) then
+        if not AlreadyAdopted and (Input.GetValue('expectedFileName')<>nil) and (Text('expectedFileName',False,1024)<>Asset.ImageFile) then
           raise Exception.Create('対象画像が更新されています。状態を取得し直してください。');
         if not Characters and (Input.GetValue('expectedContext')<>nil) then begin
           if FAssetManager<>nil then FAssetManager.FlushDraft;
@@ -236,7 +234,7 @@ begin
             if (Relative='') or not SameFileName(ExcludeTrailingPathDelimiter(TPath.GetFullPath(Root)),ExcludeTrailingPathDelimiter(TPath.GetFullPath(FGenerationActive.Root))) or
               not SameFileName(Path,SafeChild(Root,Relative)) then raise Exception.Create('受信した生成ファイルと登録先が一致しません。');
           end else begin
-            Relative:=''; if not Characters then Relative:='Images\';
+            Relative:='';
             Relative:=CopyValidatedComicImage(Path,Root,Relative);
             ID:=SafeChild(Root,Relative);
             try
@@ -244,11 +242,11 @@ begin
               ValidateComicImage(ID);
             except FreeAndNil(ManagedLock); try TFile.Delete(ID); except end; raise; end;
           end;
-          ID:=SafeChild(Root,Relative); OldFile:=Asset.FileName;
+          ID:=SafeChild(Root,Relative); OldFile:=Asset.RelativePath;
           try
-            Asset.FileName:=Relative; Persist;
+            Asset.RelativePath:=Relative; Persist;
           except
-            Asset.FileName:=OldFile; FreeAndNil(ManagedLock);
+            Asset.RelativePath:=OldFile; FreeAndNil(ManagedLock);
             if not Generated then try TFile.Delete(ID); except end;
             raise;
           end;

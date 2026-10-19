@@ -4,7 +4,7 @@
 interface
 uses ComicDpi, ComicImeFocus, Winapi.Windows, Winapi.Messages, System.SysUtils, System.Classes, System.UITypes, System.IOUtils, System.Generics.Collections,
   Vcl.Forms, Vcl.Controls, Vcl.StdCtrls, Vcl.ExtCtrls, Vcl.ComCtrls,
-  Vcl.Dialogs, Vcl.Graphics, Vcl.Menus, Vcl.Imaging.pngimage, Vcl.Imaging.jpeg, ComicModel, ComicAssetEditing, ComicCharacterRefs, ComicScriptAssist;
+  Vcl.Dialogs, Vcl.Graphics, Vcl.Menus, Vcl.Imaging.pngimage, Vcl.Imaging.jpeg, ComicModel, ComicAssetEditing, ComicCharacterRefs, ComicScriptAssist, ComicNewProjectDialog, ComicProjectReferences;
 type
   TAssetDialog = class(TForm)
   private
@@ -140,7 +140,7 @@ begin
   if Characters then Caption:='キャラクター管理 — 共通ライブラリ' else Caption:='画像管理 — '+Project.Title;
   Bar:=TPanel.Create(Self); Bar.Parent:=Self; Bar.Align:=alBottom; Bar.Height:=D(54); Bar.BevelOuter:=bvLowered; Bar.BevelWidth:=1;
   if Characters then begin Button('人物を追加',12,130,0,AddItem); Button('服装を追加',150,130,1,AddItem); end;
-  if Characters then begin Button('画像を登録',324,130,0,ChooseImage); Button('保存して閉じる',654,220,0,SaveClick); end;
+  if Characters then begin Button('画像を登録',324,130,0,ChooseImage); Button('保存',654,220,0,SaveClick); end;
   if not Characters and Assigned(PresetHandler) then Button('生成プリセット',466,170,0,PresetHandler);
   if Assigned(GenerateHandler) then begin
     Bar.Height:=D(102);
@@ -220,7 +220,7 @@ begin
   FAddChild:=Item('コマを作成',1,AddItem); FTitle:=Item('タイトルを追加',1,SceneVariantClick);
   Item('-',0,nil); FChooseImage:=Item('選択項目に画像を登録...',0,ChooseImage);
   FReferences:=Item('参照する人物・服装: 0件',0,ChooseReferences);
-  FScriptLoad:=Item('台本を読み込む／補完...',0,LoadScriptClick);
+  FScriptLoad:=Item('台本を貼り付けて読み込む...',0,LoadScriptClick);
   Item('-',0,nil); FRemoveScene:=Item('削除',0,DeleteSceneClick);
   // メニューは一覧だけに割り当てる。VCLは入力欄の親階層からこのショートカットを参照しない。
   FRemoveScene.ShortCut:=ShortCut(VK_DELETE,[]);
@@ -258,23 +258,17 @@ begin
   if FGenerationStatus<>nil then FGenerationStatus.Caption:=Result.Summary else FHint.Caption:=Result.Summary;
 end;
 procedure TAssetDialog.LoadScriptClick(Sender: TObject);
-var D: TOpenDialog;
+var Text: string;
 begin
-  D:=TOpenDialog.Create(Self);
-  try
-    D.Filter:='台本テキスト (*.txt)|*.txt'; D.Options:=[ofFileMustExist,ofPathMustExist,ofNoChangeDir,ofEnableSizing];
-    if D.Execute then begin
-      if TFile.GetSize(D.FileName)>4*1024*1024 then raise Exception.Create('台本は4MB以下にしてください。');
-      LoadScriptText(TFile.ReadAllText(D.FileName,TEncoding.UTF8));
-    end;
-  finally D.Free; end;
+  if FProject.ScriptSource<>'' then begin ShowMessage('台本の追加・置換は現在保留中です。'); Exit; end;
+  Text:=''; if PasteComicScript(Self,Text) and (Trim(Text)<>'') then LoadScriptText(Text);
 end;
 procedure TAssetDialog.CancelGenerateClick(Sender: TObject);
 begin if Assigned(FCancelHandler) then FCancelHandler(Self); end;
 procedure TAssetDialog.RefreshFromGenerated(const AssetID: string; Preview: TGraphic);
 var N: TTreeNode; A: TComicAsset;
 begin
-  for N in FTree.Items do if N.Data<>nil then begin A:=TComicAsset(N.Data); N.Text:=A.Name; if A.FileName='' then N.Text:=N.Text+'  [No Image]'; end;
+  for N in FTree.Items do if N.Data<>nil then begin A:=TComicAsset(N.Data); N.Text:=A.Name; if A.ImageFile='' then N.Text:=N.Text+'  [No Image]'; end;
   if (FCurrent<>nil) and (FCurrent.ID=AssetID) and (Preview<>nil) then begin
     FImage.Picture.Assign(Preview); FPreviewError:=''; FHint.Caption:=FBaseHint;
   end;
@@ -298,7 +292,7 @@ begin
   end;
   for N in FTree.Items do if N.Data=Pointer(FCurrent) then begin
     N.Text:=FCurrent.Name;
-    if FCurrent.FileName='' then N.Text:=N.Text+'  [No Image]';
+    if FCurrent.ImageFile='' then N.Text:=N.Text+'  [No Image]';
   end;
 end;
 procedure TAssetDialog.BuildTree;
@@ -312,11 +306,11 @@ begin
     if FCharacters then Root:=FTree.Items.Add(nil,'人物');
     for A in FList do if A.ParentID='' then begin
       N:=FTree.Items.AddChildObject(Root,A.Name, A);
-      if A.FileName='' then N.Text:=N.Text+'  [No Image]';
+      if A.ImageFile='' then N.Text:=N.Text+'  [No Image]';
       if A=FCurrent then Selected:=N;
       for B in FList do if B.ParentID=A.ID then begin
         Child:=FTree.Items.AddChildObject(N,B.Name,B);
-        if B.FileName='' then Child.Text:=Child.Text+'  [No Image]';
+        if B.ImageFile='' then Child.Text:=Child.Text+'  [No Image]';
         if B=FCurrent then Selected:=Child;
       end;
       if Expanded.Contains(A.ID) then N.Expand(False);
@@ -341,8 +335,8 @@ begin
   FName.Text:=FCurrent.Name; FNotes.Text:=FCurrent.Notes;
   if FCharacters then begin FName.Text:=FCurrent.StateName; FCharacterName.Text:=FCurrent.CharacterName; FCharacterNotes.Text:=FCurrent.CharacterNotes; end;
   if FReferences<>nil then FReferences.Caption:='参照する人物・服装: '+IntToStr(Length(FCurrent.CharacterRefs))+'件';
-  if FCurrent.FileName='' then Exit;
-  if FCharacters then Path:=SafeChild(TPath.Combine(DataRoot,'Characters'),FCurrent.FileName)
+  if FCurrent.ImageFile='' then Exit;
+  if FCharacters then Path:=SafeChild(TPath.Combine(DataRoot,'Characters'),FCurrent.ImageFile)
   else Path:=FProject.ImagePath(FCurrent.ID);
   try
     if not FileExists(Path) then raise Exception.Create('ファイルが見つかりません。');
@@ -386,13 +380,13 @@ begin
     P.LoadFromFile(D.FileName);
     if (P.Width=0) or (P.Height=0) then raise Exception.Create('画像のサイズが不正です。');
     if FCharacters then begin Root:=TPath.Combine(DataRoot,'Characters'); Relative:=FCurrent.ID+'-'+NewUID+ExtractFileExt(D.FileName); end
-    else begin Root:=FProject.Folder; Relative:='Images\'+FCurrent.ID+'-'+NewUID+ExtractFileExt(D.FileName); end;
+    else begin Root:=FProject.Folder; Relative:=FCurrent.ID+'-'+NewUID+ExtractFileExt(D.FileName); end;
     ForceDirectories(Root); Path:=SafeChild(Root,Relative); TFile.Copy(D.FileName,Path,False);
-    FCurrent.FileName:=Relative; FImage.Picture.Assign(P); Store;
+    FCurrent.RelativePath:=Relative; FImage.Picture.Assign(P); Store;
   finally P.Free; D.Free; end;
 end;
 procedure TAssetDialog.SaveClick(Sender: TObject);
-begin ModalResult:=mrOK; end;
+begin if Parent<>nil then SaveWorkspace else ModalResult:=mrOK; end;
 procedure TAssetDialog.Popup(Sender: TObject);
 begin
   if FCharacters then FPromote.Enabled:=FWritable and (FCurrent<>nil) and (FCurrent.ParentID<>'')
@@ -425,11 +419,16 @@ begin
   finally FLoading:=False; BuildTree; end;
 end;
 procedure TAssetDialog.ChooseReferences(Sender: TObject);
-var Dialog: TComicCharacterRefDialog;
+var Dialog: TComicCharacterRefDialog; Choices: TObjectList<TComicAsset>;
 begin
   if (FCurrent=nil) or not FWritable or FGenerationBusy or FCharacters or (FCurrent.ParentID='') or (FCharacterList=nil) then Exit;
-  Dialog:=TComicCharacterRefDialog.CreateSelector(Self,FCharacterList,FCurrent.CharacterRefs);
-  try if Dialog.ShowModal=mrOK then ApplyReferences(Dialog.SelectedIDs); finally Dialog.Free; end;
+  Choices:=TObjectList<TComicAsset>.Create(False);
+  try
+    for var Item in FProject.CharacterReferences do Choices.Add(Item);
+    for var Item in FCharacterList do if AssetByID(Choices,Item.ID)=nil then Choices.Add(Item);
+    Dialog:=TComicCharacterRefDialog.CreateSelector(Self,Choices,FCurrent.CharacterRefs);
+    try if Dialog.ShowModal=mrOK then ApplyReferences(Dialog.SelectedIDs); finally Dialog.Free; end;
+  finally Choices.Free; end;
 end;
 procedure TAssetDialog.ApplyReferences(const IDs: TArray<string>);
 begin
@@ -514,7 +513,7 @@ procedure TAssetDialog.PersistChanges;
 begin
   Store;
   if FCharacters then WriteAssets(FList,TPath.Combine(DataRoot,'Characters\Library.json'))
-  else AtomicWrite(TPath.Combine(FProject.Folder,'Draft.json'),FProject.Snapshot);
+  else begin CaptureProjectReferences(FProject,FCharacterList); AtomicWrite(TPath.Combine(FProject.Folder,'Draft.json'),FProject.Snapshot); end;
 end;
 procedure TAssetDialog.ReportSaveError(const Message: string);
 begin MessageDlg(Message,mtError,[mbOK],0); end;

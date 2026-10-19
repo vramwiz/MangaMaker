@@ -7,7 +7,7 @@ function ScriptGenerationPlan(Project: TComicProject; Characters: TObjectList<TC
 function NextScriptGenerationAsset(Plan: TJSONObject): string;
 function ScriptContinuityData(Project: TComicProject; const AssetID: string): TJSONArray;
 implementation
-uses System.SysUtils, System.IOUtils, ComicScript;
+uses System.SysUtils, System.IOUtils, ComicScript, ComicProjectReferences;
 
 function LinkedAsset(Project: TComicProject; State: TJSONObject; const Prefix,ID: string): TComicAsset;
 var V: TJSONValue;
@@ -29,7 +29,7 @@ begin
       if (Previous.Kind<>skImage) or not ScriptHasName(Previous.Get('人物'),Alias) then Continue;
       A:=LinkedAsset(Project,State,Prefix,Previous.ID); Row:=TJSONObject.Create; Result.AddElement(Row);
       Row.AddPair('role',Alias); Row.AddPair('scriptId',Previous.ID); Row.AddPair('referencePath','');
-      if (A<>nil) and (A.FileName<>'') and FileExists(Project.ImagePath(A.ID)) then begin
+      if (A<>nil) and (A.ImageFile<>'') and FileExists(Project.ImagePath(A.ID)) then begin
         Row.RemovePair('referencePath').Free; Row.AddPair('referencePath',Project.ImagePath(A.ID));
       end;
       Break;
@@ -76,11 +76,11 @@ begin
       if (Item.Problems.Count>0) or (Item.Get('生成')='保留') or (Asset=nil) then begin
         Status:='deferred'; Reason:=Trim(Item.Problems.Text);
         if Reason='' then Reason:='保留中、または画像管理への取込が必要です。';
-      end else if (Asset.FileName<>'') and FileExists(Project.ImagePath(Asset.ID)) then Status:='completed'
+      end else if (Asset.ImageFile<>'') and FileExists(Project.ImagePath(Asset.ID)) then Status:='completed'
       else begin
         if Asset.SourceID<>'' then begin
           Source:=Project.Asset(Asset.SourceID);
-          if (Source=nil) or (Source.FileName='') or not FileExists(Project.ImagePath(Source.ID)) then begin
+          if (Source=nil) or (Source.ImageFile='') or not FileExists(Project.ImagePath(Source.ID)) then begin
             Status:='waiting'; Reason:='参照背景の画像取得待ち';
           end;
         end;
@@ -91,10 +91,9 @@ begin
           end;
         finally ContinuityRefs.Free; end;
         for RefID in Asset.CharacterRefs do begin
-          Character:=nil;
-          if Characters<>nil then for var A in Characters do if A.ID=RefID then begin Character:=A; Break; end;
-          if (Character=nil) or (Character.FileName='') or
-            not FileExists(SafeChild(TPath.Combine(DataRoot,'Characters'),Character.FileName)) then begin
+          Character:=ProjectCharacter(Project,Characters,RefID);
+          if (Character=nil) or (Character.ImageFile='') or
+            not FileExists(ProjectCharacterPath(Project,Characters,RefID)) then begin
             Status:='deferred'; Reason:='登録キャラの参照画像がありません：'+RefID; Break;
           end;
         end;
